@@ -646,8 +646,6 @@ export async function fetchAnalytics() {
     p50Latency: 0,
     p95Latency: 0,
     p99Latency: 0,
-    ragGroundingAvg: 0,
-    ragRetryRate: 0,
   };
 }
 const authUser = (response, role) => ({
