@@ -1,4 +1,5 @@
 const nextConfig = {
+  output: 'standalone',
   turbopack: {
     root: process.cwd(),
   },

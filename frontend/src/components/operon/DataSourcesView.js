@@ -25,7 +25,7 @@ const SOURCE_TYPE_LABELS = {
   mysql:    { label: "MySQL", badge: "SQL Database", color: "bg-cyan-50 text-cyan-700" },
   neo4j:    { label: "Neo4j Graph", badge: "Graph Database", color: "bg-emerald-50 text-emerald-700" },
   vector:   { label: "Vector Store", badge: "Vector Embeddings", color: "bg-purple-50 text-purple-700" },
-  hybrid:   { label: "Hybrid RAG", badge: "BM25 + pgvector", color: "bg-indigo-50 text-indigo-700" },
+  hybrid:   { label: "Hybrid RAG", badge: "Legacy source type", color: "bg-indigo-50 text-indigo-700" },
 };
 
 export default function DataSourcesView({ onRefresh }) {
@@ -44,7 +44,7 @@ export default function DataSourcesView({ onRefresh }) {
     name: "",
     source_type: "postgres",
     connection_uri: "",
-    allowlisted_tables: "customers, orders, tickets, products",
+    allowlisted_tables: "",
     allowlisted_schemas: "public",
     read_only: true,
   });
@@ -56,7 +56,7 @@ export default function DataSourcesView({ onRefresh }) {
   // Create index form state
   const [indexForm, setIndexForm] = useState({
     name: "",
-    retrieval_mode: "hybrid",
+    retrieval_mode: "keyword",
     documents: "",
   });
 
@@ -156,7 +156,7 @@ export default function DataSourcesView({ onRefresh }) {
         name: "",
         source_type: "postgres",
         connection_uri: "",
-        allowlisted_tables: "customers, orders, tickets, products",
+        allowlisted_tables: "",
         allowlisted_schemas: "public",
         read_only: true,
       });
@@ -184,7 +184,7 @@ export default function DataSourcesView({ onRefresh }) {
         documents: docs,
       });
       setShowIndexModal(false);
-      setIndexForm({ name: "", retrieval_mode: "hybrid", documents: "" });
+      setIndexForm({ name: "", retrieval_mode: "keyword", documents: "" });
       await fetchData();
       if (onRefresh) onRefresh();
     } catch (err) {
@@ -194,39 +194,20 @@ export default function DataSourcesView({ onRefresh }) {
     }
   };
 
-  const handleRunRetrievalTest = (e) => {
+  const handleRunRetrievalTest = async (e) => {
     e.preventDefault();
     if (!testQuery.trim()) return;
+    setFormError("");
     setRetrievalSearching(true);
-    setTimeout(() => {
-      setRetrievalResults([
-        {
-          id: "chunk-101",
-          source: "enterprise_knowledge_base",
-          title: "Refund Policy & Dispute Resolution Protocol",
-          score: 0.94,
-          mode: "Hybrid (BM25: 0.91 + Dense: 0.96)",
-          snippet: "Customers on the Pro tier may request duplicate billing refunds within 30 days of the invoice date. The Customer Support Agent is authorized to verify the transaction in the orders table and schedule a credit memo up to $250.",
-        },
-        {
-          id: "chunk-102",
-          source: "service_level_agreements",
-          title: "SLA Response Times by Customer Tier",
-          score: 0.88,
-          mode: "Hybrid (BM25: 0.82 + Dense: 0.92)",
-          snippet: "Tier 1 Enterprise customers have a 1-hour initial response SLA and a 4-hour resolution SLA. Automated ticket triage should prioritize tickets from enterprise domain addresses.",
-        },
-        {
-          id: "chunk-103",
-          source: "postgres_schema_catalog",
-          title: "orders & invoices Schema Definition",
-          score: 0.81,
-          mode: "Sparse BM25",
-          snippet: "Table: orders(id UUID, customer_id UUID, amount DECIMAL, status VARCHAR, created_at TIMESTAMP). Read-only authorization granted to Customer Support and Sales agents.",
-        },
-      ]);
+    try {
+      const res = await operonApi.dataSources.testQuery({ query: testQuery });
+      setRetrievalResults(res?.results || []);
+    } catch (err) {
+      setRetrievalResults([]);
+      setFormError(err.message || "Could not search the knowledge indexes.");
+    } finally {
       setRetrievalSearching(false);
-    }, 450);
+    }
   };
 
   const filteredSources = sources.filter(
@@ -236,32 +217,32 @@ export default function DataSourcesView({ onRefresh }) {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="operon-themed-view space-y-6 text-slate-800 dark:text-gray-200">
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-6 border-b border-slate-200">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold text-slate-900">Data Sources & Knowledge Retrieval</h1>
+            <h1 className="text-xl font-bold  transition">Data Sources & Knowledge Retrieval</h1>
             <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
               Tenant Sandboxed
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Connect isolated customer databases, configure allowlisted schemas, and manage hybrid BM25 + vector search.
+            Manage registered source metadata and RAG documents stored in this workspace.
           </p>
         </div>
 
         <div className="flex items-center gap-2">
           <button
             onClick={fetchData}
-            className="p-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 transition"
+            className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition-colors duration-200"
             title="Refresh sources"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
           </button>
           <button
             onClick={() => setShowIndexModal(true)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-medium transition"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-medium transition-colors duration-200"
           >
             <FileText className="w-3.5 h-3.5 text-slate-500" />
             New Knowledge Index
@@ -282,18 +263,18 @@ export default function DataSourcesView({ onRefresh }) {
 
       {/* Stats Overview */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-white rounded-xl border border-slate-200 p-4">
+        <div className="bg-white dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800 p-4">
           <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-500">Connected Databases</span>
+            <span className="text-xs text-slate-500">Registered Data Sources</span>
             <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600">
               <Database className="w-4 h-4" />
             </div>
           </div>
           <div className="text-2xl font-bold text-slate-900 mt-2">{sources.length}</div>
-          <p className="text-[11px] text-slate-400 mt-1">SQL and graph databases sandbox</p>
+          <p className="text-[11px] text-slate-400 mt-1">Saved in this workspace</p>
         </div>
 
-        <div className="bg-white rounded-xl border border-slate-200 p-4">
+        <div className="bg-white dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800 p-4">
           <div className="flex items-center justify-between">
             <span className="text-xs text-slate-500">Knowledge Indexes</span>
             <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600">
@@ -301,18 +282,18 @@ export default function DataSourcesView({ onRefresh }) {
             </div>
           </div>
           <div className="text-2xl font-bold text-slate-900 mt-2">{indexes.length}</div>
-          <p className="text-[11px] text-slate-400 mt-1">Hybrid BM25 + pgvector indexes</p>
+          <p className="text-[11px] text-slate-400 mt-1">User added RAG documents</p>
         </div>
 
-        <div className="bg-white rounded-xl border border-slate-200 p-4">
+        <div className="bg-white dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800 p-4">
           <div className="flex items-center justify-between">
             <span className="text-xs text-slate-500">Security Sandbox</span>
             <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600">
               <Shield className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-2xl font-bold text-emerald-600 mt-2">Active</div>
-          <p className="text-[11px] text-slate-400 mt-1">Read-only enforce + table allowlist</p>
+          <div className="text-2xl font-bold text-emerald-600 mt-2">{sources.filter((source) => source.schema_config?.read_only).length}</div>
+          <p className="text-[11px] text-slate-400 mt-1 transition">Registered sources marked read-only</p>
         </div>
       </div>
 
@@ -370,15 +351,15 @@ export default function DataSourcesView({ onRefresh }) {
           {loading ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {[1, 2].map((i) => (
-                <div key={i} className="h-44 bg-white rounded-xl border border-slate-200 p-5 animate-pulse" />
+                <div key={i} className="h-44 bg-white dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800 p-5 animate-pulse" />
               ))}
             </div>
           ) : filteredSources.length === 0 ? (
-            <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
+            <div className="bg-white dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800 p-12 text-center">
               <Database className="w-10 h-10 text-slate-300 mx-auto mb-3" />
               <h3 className="text-sm font-semibold text-slate-900">No data sources connected</h3>
               <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 mb-4">
-                Connect your PostgreSQL, MySQL, or Neo4j databases so agents can securely query authorized business data.
+                Register a source and its access rules. External database connections are not configured yet.
               </p>
               <button
                 onClick={() => setShowConnectModal(true)}
@@ -400,7 +381,7 @@ export default function DataSourcesView({ onRefresh }) {
                 return (
                   <div
                     key={s.id}
-                    className="bg-white rounded-xl border border-slate-200 p-5 hover:border-slate-300 transition"
+                    className="bg-white dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800 p-5 hover:border-slate-300 dark:hover:border-slate-700 transition-colors duration-200"
                   >
                     <div className="flex items-start justify-between mb-3">
                       <div className="flex items-center gap-3">
@@ -413,15 +394,15 @@ export default function DataSourcesView({ onRefresh }) {
                             <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${meta.color}`}>
                               {meta.label}
                             </span>
-                            <span className="text-[10px] text-slate-400">
-                              {s.created_at ? new Date(s.created_at).toLocaleDateString() : "Active"}
+                          <span className="text-[10px] text-slate-400">
+                              {s.created_at ? new Date(s.created_at).toLocaleDateString() : ""}
                             </span>
                           </div>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-green-50 text-green-700 border border-green-200">
-                          <CheckCircle2 className="w-3 h-3" /> Ready
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200">
+                          <CheckCircle2 className="w-3 h-3" /> {s.status || "Registered"}
                         </span>
                         <button
                           type="button"
@@ -471,11 +452,11 @@ export default function DataSourcesView({ onRefresh }) {
       {activeTab === "indexes" && (
         <div className="space-y-4">
           {indexes.length === 0 ? (
-            <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
+            <div className="bg-white dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800 p-12 text-center">
               <FileText className="w-10 h-10 text-slate-300 mx-auto mb-3" />
               <h3 className="text-sm font-semibold text-slate-900">No knowledge indexes yet</h3>
               <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 mb-4">
-                Create a knowledge index to allow agents to retrieve documentation, standard operating procedures, and product guides.
+                Create an index from text documents you add for agent retrieval.
               </p>
               <button
                 onClick={() => setShowIndexModal(true)}
@@ -489,7 +470,7 @@ export default function DataSourcesView({ onRefresh }) {
               {indexes.map((idx) => (
                 <div
                   key={idx.id}
-                  className="bg-white rounded-xl border border-slate-200 p-5 hover:border-slate-300 transition"
+                  className="bg-white dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800 p-5 hover:border-slate-300 dark:hover:border-slate-700 transition-colors duration-200"
                 >
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-3">
@@ -503,14 +484,14 @@ export default function DataSourcesView({ onRefresh }) {
                             {idx.retrieval_mode.toUpperCase()} RAG
                           </span>
                           <span className="text-[10px] text-slate-400">
-                            {idx.doc_count || 0} chunks indexed
+                            {idx.doc_count || 0} documents registered
                           </span>
                         </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        <CheckCircle2 className="w-3 h-3" /> Synchronized
+                        <CheckCircle2 className="w-3 h-3" /> Stored
                       </span>
                       <button
                         type="button"
@@ -525,17 +506,6 @@ export default function DataSourcesView({ onRefresh }) {
                       </button>
                     </div>
                   </div>
-
-                  <div className="mt-4 pt-3 border-t border-slate-100 text-xs text-slate-500 space-y-1">
-                    <div className="flex justify-between">
-                      <span>Embedding Model:</span>
-                      <span className="font-mono text-slate-700 text-[11px]">all-MiniLM-L6-v2</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Pipeline:</span>
-                      <span className="text-slate-700">BM25 (Sparse) + pgvector (Dense)</span>
-                    </div>
-                  </div>
                 </div>
               ))}
             </div>
@@ -545,11 +515,11 @@ export default function DataSourcesView({ onRefresh }) {
 
       {/* Tab: Retrieval Test Playground */}
       {activeTab === "test" && (
-        <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-6">
+        <div className="bg-white dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800 p-6 space-y-6">
           <div>
-            <h3 className="text-sm font-semibold text-slate-900">Retrieval Verification Playground</h3>
+            <h3 className="text-sm font-semibold text-slate-900">Keyword Retrieval</h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Execute live hybrid retrieval queries across connected knowledge bases and verify similarity scores.
+Search document text that has been added to this workspace's knowledge indexes.
             </p>
           </div>
 
@@ -567,7 +537,7 @@ export default function DataSourcesView({ onRefresh }) {
             <button
               type="submit"
               disabled={retrievalSearching || !testQuery.trim()}
-              className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium transition flex items-center gap-2"
+              className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium transition-colors duration-200 flex items-center gap-2"
             >
               {retrievalSearching ? (
                 <>
@@ -577,7 +547,7 @@ export default function DataSourcesView({ onRefresh }) {
               ) : (
                 <>
                   <Play className="w-3.5 h-3.5" />
-                  Retrieve Chunks
+                  Search Documents
                 </>
               )}
             </button>
@@ -585,12 +555,12 @@ export default function DataSourcesView({ onRefresh }) {
 
           {retrievalResults && (
             <div className="space-y-3 pt-4 border-t border-slate-100">
+              {formError && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{formError}</p>}
               <div className="flex items-center justify-between text-xs text-slate-500">
-                <span>Top Retrieved Documents ({retrievalResults.length})</span>
-                <span className="text-[11px] text-emerald-600 font-medium">Re-ranked with Cross-Encoder</span>
+                <span>Matching documents ({retrievalResults.length})</span>
               </div>
 
-              {retrievalResults.map((res) => (
+              {retrievalResults.length === 0 ? <p className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-600">No matching documents were found in the saved knowledge bases.</p> : retrievalResults.map((res) => (
                 <div key={res.id} className="p-4 rounded-lg border border-slate-200 bg-slate-50/50 space-y-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -625,8 +595,8 @@ export default function DataSourcesView({ onRefresh }) {
                   <Database className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-slate-900">Connect Customer Database</h3>
-                  <p className="text-[11px] text-slate-500">Tenant-isolated credential sandbox</p>
+                  <h3 className="text-sm font-bold text-slate-900">Register Data Source</h3>
+                  <p className="text-[11px] text-slate-500">Source metadata only; external connectivity is not configured.</p>
                 </div>
               </div>
               <button
@@ -658,7 +628,7 @@ export default function DataSourcesView({ onRefresh }) {
               </div>
 
               <div>
-                <label className="block text-slate-700 font-medium mb-1">Database Type</label>
+                <label className="block text-slate-700 font-medium mb-1">Data Source Type</label>
                 <select
                   value={connectForm.source_type}
                   onChange={(e) => setConnectForm({ ...connectForm, source_type: e.target.value })}
@@ -667,24 +637,10 @@ export default function DataSourcesView({ onRefresh }) {
                   <option value="postgres">PostgreSQL</option>
                   <option value="mysql">MySQL</option>
                   <option value="neo4j">Neo4j Graph Database</option>
-                  <option value="vector">pgvector / Vector Database</option>
-                  <option value="hybrid">Hybrid Search Store</option>
                 </select>
               </div>
 
-              <div>
-                <label className="block text-slate-700 font-medium mb-1">Connection String / Host</label>
-                <input
-                  type="text"
-                  placeholder="postgresql://app_ro:***@db.tenant.internal:5432/production"
-                  value={connectForm.connection_uri}
-                  onChange={(e) => setConnectForm({ ...connectForm, connection_uri: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 font-mono text-slate-800 focus:outline-none focus:border-blue-600"
-                />
-                <p className="text-[10px] text-slate-400 mt-1">
-                  Credentials are encrypted in Operon Tenant Vault and never exposed to the client.
-                </p>
-              </div>
+              <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">This saves source metadata and access rules. External database connectivity is not configured yet.</p>
 
               <div>
                 <label className="block text-slate-700 font-medium mb-1">Allowlisted Tables</label>
@@ -713,12 +669,12 @@ export default function DataSourcesView({ onRefresh }) {
 
               {/* Test Connection Output */}
               {testResult && (
-                <div className="p-3 rounded-lg bg-green-50 border border-green-200 text-green-800 text-xs space-y-1">
+                <div className={`p-3 rounded-lg border text-xs space-y-1 ${testResult.success ? "bg-green-50 border-green-200 text-green-800" : "bg-amber-50 border-amber-200 text-amber-800"}`}>
                   <div className="flex items-center gap-1.5 font-semibold">
-                    <CheckCircle2 className="w-4 h-4 text-green-600" />
-                    <span>Connection Verified ({testResult.latency_ms}ms)</span>
+                    {testResult.success ? <CheckCircle2 className="w-4 h-4 text-green-600" /> : <AlertCircle className="w-4 h-4 text-amber-600" />}
+                    <span>{testResult.success ? "Connection verified" : "Connection test unavailable"}</span>
                   </div>
-                  <p className="text-[11px] text-green-700">{testResult.message}</p>
+                  <p className="text-[11px]">{testResult.message}</p>
                 </div>
               )}
 
@@ -765,7 +721,7 @@ export default function DataSourcesView({ onRefresh }) {
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-slate-900">Create Knowledge Index</h3>
-                  <p className="text-[11px] text-slate-500">Hybrid BM25 + dense vector indexing</p>
+                  <p className="text-[11px] text-slate-500">Keyword retrieval over documents you add</p>
                 </div>
               </div>
               <button
@@ -796,19 +752,18 @@ export default function DataSourcesView({ onRefresh }) {
                   onChange={(e) => setIndexForm({ ...indexForm, retrieval_mode: e.target.value })}
                   className="w-full px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:border-blue-600 bg-white"
                 >
-                  <option value="hybrid">Hybrid (Dense Vector + BM25 Lexical)</option>
-                  <option value="vector">Dense Vector Search Only</option>
-                  <option value="keyword">BM25 Keyword Search Only</option>
+                  <option value="keyword">Keyword retrieval</option>
                 </select>
               </div>
 
               <div>
                 <label className="block text-slate-700 font-medium mb-1">
-                  Sample Knowledge Documents (Optional)
+                  Knowledge Documents (required)
                 </label>
                 <textarea
                   rows={4}
-                  placeholder="Paste documentation paragraphs separated by blank lines..."
+                  required
+                  placeholder="Paste the document text you want agents to retrieve..."
                   value={indexForm.documents}
                   onChange={(e) => setIndexForm({ ...indexForm, documents: e.target.value })}
                   className="w-full px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:border-blue-600 font-mono text-[11px]"
@@ -825,7 +780,7 @@ export default function DataSourcesView({ onRefresh }) {
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting}
+                  disabled={submitting || !indexForm.documents.trim()}
                   className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium shadow-sm transition"
                 >
                   {submitting ? "Indexing..." : "Build Knowledge Index"}
@@ -850,7 +805,7 @@ export default function DataSourcesView({ onRefresh }) {
               This action cannot be undone.
             </p>
             <p className="text-xs text-slate-500 dark:text-gray-400 mb-5 leading-relaxed">
-              All indexed schemas, credentials, and embeddings for this database will be permanently removed.
+              This saved data source record will be permanently removed.
             </p>
             <div className="text-left mb-5">
               <label className="block text-xs font-semibold text-slate-700 dark:text-gray-300 mb-1.5">
@@ -880,7 +835,7 @@ export default function DataSourcesView({ onRefresh }) {
                 type="button"
                 onClick={handleConfirmDelete}
                 disabled={deleteConfirmText.trim() !== deleteTarget.name.trim() || deleting}
-                className="flex-1 px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold transition shadow-md shadow-red-600/20"
+                className="flex-1 px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors duration-200 shadow-md shadow-red-600/20"
               >
                 {deleting ? "Deleting…" : "Delete Database"}
               </button>

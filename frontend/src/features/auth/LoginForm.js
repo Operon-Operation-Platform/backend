@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -15,6 +15,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { useOperon } from "../../context/OperonContext";
+import { getOperonToken } from "../../api/operon";
 import OperonLogo from "../../components/ui/OperonLogo";
 
 export default function LoginForm() {
@@ -28,6 +29,18 @@ export default function LoginForm() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    const sessionStatus = new URLSearchParams(window.location.search).get("session");
+    if (sessionStatus === "missing" && getOperonToken()) {
+      router.replace("/operon");
+      return;
+    }
+
+    if (sessionStatus === "invalid") {
+      setError("Sign-in succeeded, but the server rejected the session token. Please sign in again.");
+    }
+  }, [router]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!email || !password) {
@@ -40,7 +53,7 @@ export default function LoginForm() {
 
     try {
       await login({ email, password });
-      router.push("/dashboard");
+      router.push("/operon");
     } catch (err) {
       setError(err.message || "Invalid email or password.");
     } finally {
@@ -50,7 +63,7 @@ export default function LoginForm() {
 
   return (
     <div className="min-h-screen bg-slate-200 bg-[radial-gradient(#94a3b8_1px,transparent_1px)] [background-size:16px_16px] flex items-center justify-center p-4 sm:p-6 lg:p-8">
-      <div className="w-full max-w-5xl bg-white rounded-2xl border-2 border-slate-600 shadow-2xl shadow-slate-900/15 overflow-hidden grid grid-cols-1 lg:grid-cols-12 min-h-[580px]">
+      <div className="w-full max-w-5xl bg-white rounded-2xl shadow-2xl shadow-slate-900/15 overflow-hidden grid grid-cols-1 lg:grid-cols-12 min-h-[580px]">
         {/* Left Column: Form */}
         <div className="lg:col-span-7 p-8 sm:p-12 flex flex-col justify-between bg-white">
           <div>
@@ -128,7 +141,7 @@ export default function LoginForm() {
                     className="absolute right-3 top-2.5 text-slate-800 hover:text-slate-950 hover:bg-slate-200 p-1 rounded-md transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-900"
                     aria-label={showPassword ? "Hide password" : "Show password"}
                   >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    {showPassword ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                   </button>
                 </div>
               </div>
@@ -181,7 +194,7 @@ export default function LoginForm() {
         <div className="hidden lg:flex lg:col-span-5 bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950 p-10 text-white flex-col justify-between relative overflow-hidden border-l border-slate-800">
           <div className="relative z-10">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/20 border border-blue-400/40 text-blue-300 text-[11px] font-bold mb-6">
-              <Bot className="w-3.5 h-3.5 text-blue-400" />
+              <Bot className="w-3.5 h-3.5 text-blue-400"/>
               <span>Multi-Tenant Agent Orchestration</span>
             </div>
 

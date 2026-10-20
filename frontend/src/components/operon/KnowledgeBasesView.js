@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   BookOpen,
   Plus,
@@ -39,74 +39,10 @@ const STATUS_CFG = {
   scheduled: { color: "text-slate-500 dark:text-gray-400",   bg: "bg-slate-100 dark:bg-slate-500/10 border-slate-200 dark:border-slate-500/20",     dot: "bg-slate-400",   label: "Scheduled" },
 };
 
-const INITIAL_KBS = [
-  {
-    id: "kb-1",
-    name: "Customer Support Playbooks",
-    type: "document",
-    status: "ready",
-    chunks: 2840,
-    lastSync: "2 hours ago",
-    size: "12.4 MB",
-    description: "Internal resolution guides, escalation procedures, and product FAQs.",
-  },
-  {
-    id: "kb-2",
-    name: "Product Documentation",
-    type: "web",
-    status: "ready",
-    chunks: 5120,
-    lastSync: "1 day ago",
-    size: "34.8 MB",
-    description: "Crawled from docs.acme.com — full developer and end-user documentation.",
-  },
-  {
-    id: "kb-3",
-    name: "CRM Deal History",
-    type: "database",
-    status: "indexing",
-    chunks: 980,
-    lastSync: "Syncing…",
-    size: "6.1 MB",
-    description: "Live connection to Salesforce CRM — deal notes, customer history, churn signals.",
-  },
-  {
-    id: "kb-4",
-    name: "Legal & Compliance Docs",
-    type: "document",
-    status: "ready",
-    chunks: 418,
-    lastSync: "5 days ago",
-    size: "8.2 MB",
-    description: "Privacy policies, terms of service, GDPR compliance checklists.",
-  },
-  {
-    id: "kb-5",
-    name: "Product Changelog & Release Notes",
-    type: "web",
-    status: "scheduled",
-    chunks: 0,
-    lastSync: "Scheduled: tonight",
-    size: "--",
-    description: "Syncs nightly from GitHub releases and Notion changelog.",
-  },
-  {
-    id: "kb-6",
-    name: "Support Ticket Archive",
-    type: "database",
-    status: "ready",
-    chunks: 11200,
-    lastSync: "30 min ago",
-    size: "89.3 MB",
-    description: "Historical support tickets, resolutions, and CSAT scores (last 24 months).",
-  },
-];
+const INITIAL_KBS = [];
 
 const SOURCE_OPTIONS = [
-  { type: "document", label: "Upload Documents", icon: Upload, desc: "PDF, DOCX, TXT, Markdown" },
-  { type: "database", label: "Database",          icon: Database, desc: "PostgreSQL, MySQL, Snowflake" },
-  { type: "web",      label: "Web Crawl",        icon: Globe,  desc: "Crawl a URL or sitemap" },
-  { type: "storage",  label: "Cloud Storage",    icon: HardDrive, desc: "S3, GCS, Azure Blob" },
+  { type: "document", label: "Add Documents", icon: Upload, desc: "TXT, Markdown, CSV, JSON" },
 ];
 
 function StatusBadge({ status }) {
@@ -152,7 +88,7 @@ function KBCard({ kb, onSync, onDeleteRequest }) {
         <div className="flex items-center gap-4 text-xs text-slate-500 dark:text-gray-400 mb-4 pt-3 border-t border-slate-100 dark:border-slate-800">
           <span className="flex items-center gap-1.5 font-medium">
             <Zap className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
-            {kb.chunks ? kb.chunks.toLocaleString() : 0} chunks
+            {kb.docCount || 0} documents
           </span>
           <span className="flex items-center gap-1.5">
             <HardDrive className="w-3.5 h-3.5" />
@@ -173,7 +109,7 @@ function KBCard({ kb, onSync, onDeleteRequest }) {
                        text-xs sm:text-sm font-semibold transition"
           >
             <RefreshCw className="w-3.5 h-3.5" />
-            Re-sync
+            Refresh list
           </button>
           <button
             onClick={() => onDeleteRequest(kb)}
@@ -194,6 +130,7 @@ export default function KnowledgeBasesView({ onRefresh }) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedSource, setSelectedSource] = useState("document");
   const [newKbName, setNewKbName] = useState("");
+  const [createError, setCreateError] = useState("");
 
   // Document upload state
   const [uploadedFiles, setUploadedFiles] = useState([]);
@@ -216,58 +153,17 @@ export default function KnowledgeBasesView({ onRefresh }) {
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deleting, setDeleting] = useState(false);
 
-  // Sync with backend on mount
-  useEffect(() => {
-    async function loadBackendData() {
-      try {
-        const [kIndexes, dSources] = await Promise.allSettled([
-          operonApi.dataSources.getKnowledgeIndexes(),
-          operonApi.dataSources.getDataSources(),
-        ]);
-
-        const merged = [];
-        if (kIndexes.status === "fulfilled" && Array.isArray(kIndexes.value)) {
-          kIndexes.value.forEach((ki) => {
-            merged.push({
-              id: ki.id,
-              name: ki.name,
-              type: "document",
-              status: "ready",
-              chunks: ki.doc_count ? ki.doc_count * 16 : 1240,
-              lastSync: "Just now",
-              size: `${((ki.doc_count || 10) * 0.4).toFixed(1)} MB`,
-              description: `Indexed knowledge index (${ki.retrieval_mode} retrieval mode).`,
-            });
-          });
-        }
-
-        if (dSources.status === "fulfilled" && Array.isArray(dSources.value)) {
-          dSources.value.forEach((ds) => {
-            merged.push({
-              id: ds.id,
-              name: ds.name,
-              type: "database",
-              status: ds.status || "ready",
-              chunks: 3420,
-              lastSync: "Recent",
-              size: "15.8 MB",
-              description: `Connected ${ds.source_type} data source sandbox with allowlisted tables.`,
-            });
-          });
-        }
-
-        if (merged.length > 0) {
-          // Prepend newly loaded items to standard playbooks
-          setKbs((prev) => {
-            const existingIds = new Set(merged.map((m) => m.id));
-            const filteredDefaults = prev.filter((p) => !existingIds.has(p.id));
-            return [...merged, ...filteredDefaults];
-          });
-        }
-      } catch {}
-    }
-    loadBackendData();
+  // Postgres is the source of truth; no local/sample knowledge entries are merged in.
+  const loadBackendData = useCallback(async () => {
+    const indexes = await operonApi.dataSources.getKnowledgeIndexes();
+    setKbs((Array.isArray(indexes) ? indexes : []).map((ki) => ({
+      id: ki.id, name: ki.name, type: "document", status: "ready",
+      chunks: 0, docCount: ki.doc_count || 0, lastSync: ki.created_at ? new Date(ki.created_at).toLocaleString() : "",
+      size: ki.config?.size_kb ? `${ki.config.size_kb} KB` : "",
+      description: (ki.config?.documents || []).map((doc) => doc.title).filter(Boolean).join(", ") || "",
+    })));
   }, []);
+  useEffect(() => { loadBackendData().catch(() => setKbs([])); }, [loadBackendData]);
 
   const filtered = kbs.filter(
     (k) =>
@@ -275,21 +171,10 @@ export default function KnowledgeBasesView({ onRefresh }) {
       k.description?.toLowerCase().includes(search.toLowerCase())
   );
 
-  const totalChunks  = kbs.reduce((s, k) => s + (k.chunks || 0), 0);
+  const totalDocuments = kbs.reduce((sum, kb) => sum + (kb.docCount || 0), 0);
   const readyCount   = kbs.filter((k) => k.status === "ready").length;
 
-  const handleSync = (id) => {
-    setKbs((prev) =>
-      prev.map((k) => (k.id === id ? { ...k, status: "indexing", lastSync: "Syncing…" } : k))
-    );
-    setTimeout(() => {
-      setKbs((prev) =>
-        prev.map((k) =>
-          k.id === id ? { ...k, status: "ready", lastSync: "Just now" } : k
-        )
-      );
-    }, 2000);
-  };
+  const handleSync = () => loadBackendData().catch(() => {});
 
   // Handle files selected via file input or drag-drop
   const handleFilesSelected = (files) => {
@@ -309,68 +194,18 @@ export default function KnowledgeBasesView({ onRefresh }) {
     setUploadedFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // Create Knowledge Base / Database
+  // Register the selected document in the knowledge index, then reload persisted state.
   const handleCreate = async () => {
-    if (!newKbName.trim()) return;
-
-    let chunksCount = 240;
-    let sizeStr = "1.2 MB";
-
-    if (selectedSource === "document") {
-      const totalBytes = uploadedFiles.reduce((acc, f) => acc + f.size, 0);
-      const totalKb = totalBytes > 0 ? totalBytes / 1024 : 150;
-      sizeStr = totalBytes > 1024 * 1024
-        ? `${(totalBytes / (1024 * 1024)).toFixed(1)} MB`
-        : `${totalKb.toFixed(1)} KB`;
-      chunksCount = Math.max(24, Math.round(totalKb * 8));
-
-      // Dispatch to backend API
-      try {
-        await operonApi.dataSources.uploadDocument({
-          name: newKbName,
-          filename: uploadedFiles[0]?.name || "document.pdf",
-          file_type: "document",
-          file_size_kb: totalKb,
-        });
-      } catch {}
-    } else if (selectedSource === "database") {
-      chunksCount = 1840;
-      sizeStr = "8.4 MB";
-      // Dispatch to backend API
-      try {
-        await operonApi.dataSources.connectDataSource({
-          name: newKbName,
-          source_type: dbType,
-          connection_uri: dbUri,
-          allowlisted_tables: dbTables.split(",").map((s) => s.trim()),
-          read_only: isReadOnly,
-        });
-      } catch {}
-    }
-
-    const newKb = {
-      id: `kb-${Date.now()}`,
-      name: newKbName,
-      type: selectedSource,
-      status: "ready",
-      chunks: chunksCount,
-      lastSync: "Just now",
-      size: sizeStr,
-      description:
-        selectedSource === "document"
-          ? `${uploadedFiles.length > 0 ? `${uploadedFiles.length} file(s) indexed: ` + uploadedFiles.map((f) => f.name).join(", ") : "Uploaded document source."}`
-          : selectedSource === "database"
-          ? `Connected ${dbType.toUpperCase()} sandbox database (${dbTables}).`
-          : selectedSource === "web"
-          ? `Indexed web crawl from ${crawlUrl}.`
-          : `Connected bucket ${storageBucket}.`,
-    };
-
-    setKbs((prev) => [newKb, ...prev]);
-    setShowAddModal(false);
-    setNewKbName("");
-    setUploadedFiles([]);
-    onRefresh?.();
+    if (!newKbName.trim() || uploadedFiles.length === 0) return;
+    setDeleting(true);
+    try {
+      const documents = await Promise.all(uploadedFiles.map(async (file) => ({ title: file.name, content: await file.text(), size_kb: Number((file.size / 1024).toFixed(1)) })));
+      await operonApi.dataSources.createKnowledgeIndex({ name: newKbName.trim(), retrieval_mode: "keyword", documents });
+      await loadBackendData();
+      setShowAddModal(false); setNewKbName(""); setUploadedFiles([]); setCreateError(""); onRefresh?.();
+    } catch (error) {
+      setCreateError(error.message || "Could not create this knowledge base.");
+    } finally { setDeleting(false); }
   };
 
   // Confirm delete handler
@@ -380,15 +215,11 @@ export default function KnowledgeBasesView({ onRefresh }) {
 
     setDeleting(true);
     try {
-      if (deleteTarget.type === "database") {
-        await operonApi.dataSources.deleteDataSource(deleteTarget.id);
-      } else {
-        await operonApi.dataSources.deleteKnowledgeIndex(deleteTarget.id);
-      }
+      await operonApi.dataSources.deleteKnowledgeIndex(deleteTarget.id);
+      await loadBackendData();
     } catch {
-      // resilient
+      // Keep the Postgres-backed item visible when deletion fails.
     } finally {
-      setKbs((prev) => prev.filter((k) => k.id !== deleteTarget.id));
       setDeleteTarget(null);
       setDeleteConfirmText("");
       setDeleting(false);
@@ -402,10 +233,10 @@ export default function KnowledgeBasesView({ onRefresh }) {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-gray-100">
-            Knowledge Bases & Databases
+            Agent Knowledge Bases
           </h1>
           <p className="text-sm text-slate-500 dark:text-gray-400 mt-1">
-            {readyCount} of {kbs.length} sources active and synchronized · {totalChunks.toLocaleString()} vector chunks indexed
+            {readyCount} of {kbs.length} knowledge bases ready - {totalDocuments} documents registered
           </p>
         </div>
         <button
@@ -416,7 +247,7 @@ export default function KnowledgeBasesView({ onRefresh }) {
           className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-sm font-semibold shadow-md shadow-cyan-600/20 transition active:scale-95 shrink-0"
         >
           <Plus className="w-4 h-4" />
-          Add Database / Knowledge Base
+          Add Agent Knowledge
         </button>
       </div>
 
@@ -427,18 +258,17 @@ export default function KnowledgeBasesView({ onRefresh }) {
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search knowledge bases, documents, or databases…"
+          placeholder="Search agent knowledge…"
           className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-gray-100 text-sm placeholder:text-slate-400 focus:outline-none focus:border-cyan-500 transition shadow-xs"
         />
       </div>
 
       {/* Metric summary row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         {[
-          { label: "Total Sources",  value: kbs.length,                        color: "text-cyan-600 dark:text-cyan-400" },
+          { label: "Knowledge Bases",  value: kbs.length,                        color: "text-cyan-600 dark:text-cyan-400" },
           { label: "Ready",          value: readyCount,                         color: "text-emerald-600 dark:text-emerald-400" },
-          { label: "Chunks Indexed", value: totalChunks.toLocaleString(),       color: "text-blue-600 dark:text-blue-400" },
-          { label: "Syncing Now",    value: kbs.filter((k) => k.status === "indexing").length, color: "text-amber-600 dark:text-amber-400" },
+          { label: "Documents", value: totalDocuments,       color: "text-blue-600 dark:text-blue-400" },
         ].map((s) => (
           <div key={s.label} className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs">
             <p className="text-xs sm:text-sm font-medium text-slate-500 dark:text-gray-400">{s.label}</p>
@@ -456,7 +286,7 @@ export default function KnowledgeBasesView({ onRefresh }) {
             onClick={() => setShowAddModal(true)}
             className="mt-4 text-cyan-600 dark:text-cyan-400 hover:text-cyan-500 text-sm font-semibold transition flex items-center gap-1"
           >
-            Create one now <ChevronRight className="w-4 h-4" />
+            Create a knowledge base <ChevronRight className="w-4 h-4" />
           </button>
         </div>
       ) : (
@@ -482,10 +312,10 @@ export default function KnowledgeBasesView({ onRefresh }) {
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-4">
               <div>
                 <h2 className="text-lg font-bold text-slate-900 dark:text-gray-100">
-                  Create Database or Knowledge Base
+                  Create Agent Knowledge Base
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-gray-400 mt-0.5">
-                  Select a source type and configure connections or document indexing.
+                  Add documents that your agents are authorized to use as retrieval knowledge.
                 </p>
               </div>
               <button
@@ -531,23 +361,25 @@ export default function KnowledgeBasesView({ onRefresh }) {
             {/* Knowledge Base Name */}
             <div className="mb-4">
               <label className="text-xs font-semibold text-slate-700 dark:text-gray-300 mb-1.5 block">
-                2. Database / Knowledge Base Name
+                2. Knowledge Base Name
               </label>
               <input
                 type="text"
                 required
                 value={newKbName}
                 onChange={(e) => setNewKbName(e.target.value)}
-                placeholder="e.g., Customer Resolution Guide, CRM SQL Database"
+                placeholder="Name this knowledge base"
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-gray-100 text-sm placeholder:text-slate-400 focus:outline-none focus:border-cyan-500 transition"
               />
             </div>
+
+            {createError && <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{createError}</p>}
 
             {/* Dynamic Configuration Panel Based on Selected Source */}
             {selectedSource === "document" && (
               <div className="mb-5 space-y-3">
                 <label className="text-xs font-semibold text-slate-700 dark:text-gray-300 block">
-                  3. Upload Documents (PDF, DOCX, TXT, MD, CSV)
+                  3. Add text documents (TXT, Markdown, CSV, JSON)
                 </label>
 
                 {/* Dropzone / Upload Click Target */}
@@ -564,7 +396,7 @@ export default function KnowledgeBasesView({ onRefresh }) {
                     ref={fileInputRef}
                     type="file"
                     multiple
-                    accept=".pdf,.docx,.doc,.txt,.md,.csv,.json"
+                    accept=".txt,.md,.csv,.json"
                     onChange={(e) => e.target.files && handleFilesSelected(e.target.files)}
                     className="hidden"
                   />
@@ -575,7 +407,7 @@ export default function KnowledgeBasesView({ onRefresh }) {
                     Click to browse or drag & drop files here
                   </p>
                   <p className="text-xs text-slate-500 dark:text-gray-400 mt-1">
-                    Supports PDF, DOCX, TXT, Markdown, CSV, and JSON (up to 50MB per file)
+                    Text files are indexed for keyword retrieval. Supports TXT, Markdown, CSV, and JSON.
                   </p>
                 </div>
 
@@ -611,7 +443,7 @@ export default function KnowledgeBasesView({ onRefresh }) {
               </div>
             )}
 
-            {selectedSource === "database" && (
+            {false && selectedSource === "database" && (
               <div className="mb-5 space-y-3.5">
                 <label className="text-xs font-semibold text-slate-700 dark:text-gray-300 block">
                   3. Database Connection Configuration
@@ -669,7 +501,7 @@ export default function KnowledgeBasesView({ onRefresh }) {
               </div>
             )}
 
-            {selectedSource === "web" && (
+            {false && selectedSource === "web" && (
               <div className="mb-5 space-y-3">
                 <label className="text-xs font-semibold text-slate-700 dark:text-gray-300 block">
                   3. Web Crawl Target
@@ -687,7 +519,7 @@ export default function KnowledgeBasesView({ onRefresh }) {
               </div>
             )}
 
-            {selectedSource === "storage" && (
+            {false && selectedSource === "storage" && (
               <div className="mb-5 space-y-3">
                 <label className="text-xs font-semibold text-slate-700 dark:text-gray-300 block">
                   3. Cloud Storage Target
@@ -720,10 +552,10 @@ export default function KnowledgeBasesView({ onRefresh }) {
               <button
                 type="button"
                 onClick={handleCreate}
-                disabled={!newKbName.trim()}
+                disabled={!newKbName.trim() || uploadedFiles.length === 0 || deleting}
                 className="flex-1 px-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-sm font-semibold transition shadow-md shadow-cyan-600/20 disabled:opacity-40 disabled:pointer-events-none"
               >
-                Create & Index
+                {deleting ? "Saving..." : "Add to Knowledge Base"}
               </button>
             </div>
           </div>
@@ -749,7 +581,7 @@ export default function KnowledgeBasesView({ onRefresh }) {
               This action cannot be undone.
             </p>
             <p className="text-xs text-slate-500 dark:text-gray-400 mb-5 leading-relaxed">
-              All vector embeddings, document chunks, and connector configurations associated with this database will be permanently deleted.
+              This knowledge base and its stored documents will be permanently deleted.
             </p>
 
             {/* Name Input Prompt */}

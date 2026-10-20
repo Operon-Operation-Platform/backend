@@ -2,13 +2,13 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { OperonProvider } from "../../context/OperonContext";
-import { operonApi, getOperonToken, setOperonToken } from "../../api/operon";
+import { OperonProvider, useOperon } from "../../context/OperonContext";
+import { operonApi, setOperonToken } from "../../api/operon";
 
 import OperonNavbar      from "../../components/operon/OperonNavbar";
 import OperonSidebar     from "../../components/operon/OperonSidebar";
 import OperonDashboard   from "../../components/operon/OperonDashboard";
-import AgentWizard       from "../../components/operon/AgentWizard";
+import AgentBuilderWorkspace from "../../components/operon/AgentBuilderWorkspace";
 import LiveRunModal      from "../../components/operon/LiveRunModal";
 import ToolsMcpManager   from "../../components/operon/ToolsMcpManager";
 import ApprovalsView     from "../../components/operon/ApprovalsView";
@@ -21,13 +21,10 @@ import OperonSettingsView from "../../features/settings/OperonSettingsView";
 
 function OperonApp() {
   const router = useRouter();
+  const { user, workspaces, activeWorkspace, loading, sessionError, sessionExpired, checkSession, switchWorkspace } = useOperon();
 
   // ── Auth & workspace state ───────────────────────────────────────────
-  const [user, setUser]                     = useState(null);
-  const [workspaces, setWorkspaces]         = useState([]);
-  const [activeWorkspace, setActiveWorkspace] = useState(null);
   const [activeTab, setActiveTab]           = useState("dashboard");
-  const [loading, setLoading]               = useState(true);
 
   // ── Data state ───────────────────────────────────────────────────────
   const [agents, setAgents]               = useState([]);
@@ -46,27 +43,13 @@ function OperonApp() {
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [sidebarOpen, setSidebarOpen]     = useState(false);
 
-  // ── Bootstrap session ────────────────────────────────────────────────
   useEffect(() => {
-    const token = getOperonToken();
-    if (token) {
-      operonApi.auth
-        .getMe()
-        .then((data) => {
-          setUser(data.user);
-          setWorkspaces(data.workspaces || []);
-          setActiveWorkspace(data.active_workspace);
-        })
-        .catch(() => setOperonToken(null))
-        .finally(() => setLoading(false));
-    } else {
-      setLoading(false);
+    if (!loading && !user && !sessionError) {
+      router.replace("/login?session=missing");
+    } else if (!loading && !user && sessionExpired) {
+      router.replace("/login?session=invalid");
     }
-  }, []);
-
-  useEffect(() => {
-    if (!loading && !user) router.replace("/login");
-  }, [loading, user, router]);
+  }, [loading, user, sessionError, sessionExpired, router]);
 
   // Sync tab from URL
   useEffect(() => {
@@ -78,7 +61,7 @@ function OperonApp() {
 
   const handleTabChange = (tab) => {
     setActiveTab(tab);
-    setSelectedAgent(null);
+    if (tab !== "agent_detail") setSelectedAgent(null);
     if (typeof window !== "undefined") {
       const url = new URL(window.location);
       url.searchParams.set("tab", tab);
@@ -94,7 +77,7 @@ function OperonApp() {
         await Promise.allSettled([
           operonApi.agents.getAgents(),
           operonApi.runs.getRuns(),
-          operonApi.approvals.getApprovals("pending"),
+          operonApi.approvals.getApprovals(),
           operonApi.toolsAndMcp.getTools(),
           operonApi.toolsAndMcp.getMcpServers(),
           operonApi.toolsAndMcp.getToolRequests(),
@@ -129,9 +112,6 @@ function OperonApp() {
   // ── Auth actions ─────────────────────────────────────────────────────
   const handleLogout = () => {
     setOperonToken(null);
-    setUser(null);
-    setWorkspaces([]);
-    setActiveWorkspace(null);
     setAgents([]); setRuns([]); setApprovals([]);
     setSelectedAgent(null);
     router.replace("/login");
@@ -139,34 +119,27 @@ function OperonApp() {
 
   const handleSwitchWorkspace = async (wsId) => {
     try {
-      await operonApi.auth.switchWorkspace(wsId);
-      const me = await operonApi.auth.getMe();
-      setActiveWorkspace(me.active_workspace);
-      setWorkspaces(me.workspaces || []);
-      refreshAll();
+      await switchWorkspace(wsId);
+      await refreshAll();
     } catch {}
   };
 
   // ── Domain handlers ──────────────────────────────────────────────────
-  const handleTriggerRun = async (agent) => {
-    try {
-      const res = await operonApi.runs.triggerRun({
+  const handleTriggerRun = async (agent, inputPayload = {}) => {
+    const res = await operonApi.runs.triggerRun({
         agent_id: agent.id,
-        input_payload: {
-          subject: "Manual trigger from Operon Dashboard",
-          body: "Initiated by platform user via the UI",
-        },
+        input_payload: inputPayload,
       });
-      setSelectedRun(res);
-      refreshAll();
-    } catch {}
+    const runDetails = await operonApi.runs.getRunDetails(res.run_id);
+    setSelectedRun(runDetails);
+    await refreshAll();
   };
 
   const handleApprovalDecide = async (id, decision, comment) => {
     try {
       await operonApi.approvals.decide(id, decision, comment);
-      refreshAll();
-    } catch {}
+      await refreshAll();
+    } catch (error) { console.error("Unable to save approval decision", error); }
   };
 
   const handleToolToggle = (tool) => {
@@ -174,7 +147,17 @@ function OperonApp() {
   };
 
   const handleRequestTool = async (form) => {
-    try { await operonApi.toolsAndMcp.requestTool(form); refreshAll(); } catch {}
+    try {
+      await operonApi.toolsAndMcp.requestTool({
+        tool_name: form.name,
+        description: form.description,
+        use_case: [form.system && `Target system: ${form.system}`, form.inputs && `Inputs: ${form.inputs}`, form.expected_output && `Expected output: ${form.expected_output}`].filter(Boolean).join("\n"),
+      });
+      await refreshAll();
+    } catch (error) {
+      console.error("Unable to submit tool request", error);
+      throw error;
+    }
   };
 
   const handleApproveToolRequest = async (id) => {
@@ -203,6 +186,25 @@ function OperonApp() {
   }
 
   if (!user) {
+    if (sessionError) {
+      return (
+        <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-6">
+          <div className="max-w-md text-center">
+            <p role="alert" className="text-sm text-red-700 dark:text-red-400">
+              Could not verify your session: {sessionError}
+            </p>
+            <button
+              type="button"
+              onClick={checkSession}
+              className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+            >
+              Try again
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center">
         <p className="text-sm text-slate-500 dark:text-gray-400">Redirecting to sign in…</p>
@@ -220,7 +222,6 @@ function OperonApp() {
             onOpenWizard={() => setShowWizard(true)}
             onOpenRun={(r) => setSelectedRun(r)}
             onSelectAgent={handleSelectAgent}
-            onTriggerRun={handleTriggerRun}
             onApprovalClick={() => handleTabChange("approvals")}
           />
         );
@@ -249,8 +250,9 @@ function OperonApp() {
           <ToolsMcpManager
             tools={tools} mcpServers={mcpServers} toolRequests={toolRequests}
             onToggleTool={handleToolToggle}
-            onConnectMcp={() => {}}
-            onDisconnectMcp={() => {}}
+            onConnectMcp={async (server) => { await operonApi.toolsAndMcp.connectMcpServer(server); await refreshAll(); }}
+            onDisconnectMcp={async (server) => { await operonApi.toolsAndMcp.disconnectMcpServer(server.id); await refreshAll(); }}
+            onApproveMcpTool={async (server, tool, approved) => { await operonApi.toolsAndMcp.approveMcpTool(server.id, tool.id, approved); await refreshAll(); }}
             onRequestTool={handleRequestTool}
             onRefresh={refreshAll}
           />
@@ -268,15 +270,15 @@ function OperonApp() {
       case "settings":
         return <OperonSettingsView />;
       case "agent_detail":
-        return selectedAgent ? (
+        return selectedAgent && agents.some((item) => item.id === selectedAgent.id) ? (
           <AgentDetailView
+            key={selectedAgent.id}
             agent={selectedAgent}
-            onTriggerRun={handleTriggerRun}
             onOpenRun={(r) => setSelectedRun(r)}
             onBack={() => handleTabChange("dashboard")}
             onRefresh={refreshAll}
           />
-        ) : null;
+        ) : <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center dark:border-slate-800 dark:bg-slate-900"><p className="text-slate-700 dark:text-slate-300">This agent is no longer available in this workspace.</p><button onClick={() => handleTabChange("dashboard")} className="mt-4 rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white">Back to agents</button></div>;
       default:
         return (
           <OperonDashboard
@@ -305,6 +307,9 @@ function OperonApp() {
           pendingApprovalsCount={approvals.length}
           user={user}
           activeWorkspace={activeWorkspace}
+          agents={agents}
+          selectedAgent={selectedAgent}
+          onSelectAgent={handleSelectAgent}
           onLogout={handleLogout}
           isMobile={false}
         />
@@ -319,6 +324,9 @@ function OperonApp() {
         pendingApprovalsCount={approvals.length}
         user={user}
         activeWorkspace={activeWorkspace}
+        agents={agents}
+        selectedAgent={selectedAgent}
+        onSelectAgent={handleSelectAgent}
         onLogout={handleLogout}
         isMobile={true}
       />
@@ -344,9 +352,13 @@ function OperonApp() {
 
       {/* ── Modals ── */}
       {showWizard && (
-        <AgentWizard
+        <AgentBuilderWorkspace
           onClose={() => setShowWizard(false)}
-          onCreated={() => { setShowWizard(false); refreshAll(); }}
+          onAgentPublished={(newAgent) => {
+            setShowWizard(false);
+            refreshAll();
+            if (newAgent) handleSelectAgent(newAgent);
+          }}
         />
       )}
       {selectedRun && (

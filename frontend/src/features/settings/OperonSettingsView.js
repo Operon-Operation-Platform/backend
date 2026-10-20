@@ -10,45 +10,32 @@ import {
   AlertCircle,
   Save,
   Plus,
-  Copy,
-  Lock,
   Mail,
   X,
   Send,
-  UserCheck,
+  Copy,
+  RefreshCw,
 } from "lucide-react";
 import { useOperon } from "../../context/OperonContext";
 import { operonApi } from "../../api/operon";
+import { API_BASE_URL } from "../../config";
 
 export default function OperonSettingsView() {
   const { user, activeWorkspace } = useOperon();
   const [activeTab, setActiveTab] = useState("workspace"); // workspace | team | security | api_keys
-  const [copiedKey, setCopiedKey] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
+  const [apiKeyStatus, setApiKeyStatus] = useState(null);
+  const [generatedApiKey, setGeneratedApiKey] = useState("");
+  const [apiKeyLoading, setApiKeyLoading] = useState(false);
+  const [apiKeyError, setApiKeyError] = useState("");
+  const [apiKeyCopied, setApiKeyCopied] = useState(false);
 
-  const [workspaceName, setWorkspaceName] = useState(activeWorkspace?.name || "Acme Operations");
-  const [businessTimezone, setBusinessTimezone] = useState("America/New_York (UTC-5)");
-  const [retentionDays, setRetentionDays] = useState("90");
+  const [workspaceName, setWorkspaceName] = useState(activeWorkspace?.name || "");
+  const [businessTimezone, setBusinessTimezone] = useState("");
+  const [retentionDays, setRetentionDays] = useState("");
 
   // Team & Invites state
-  const [members, setMembers] = useState([
-    {
-      id: "mem-1",
-      name: user?.full_name || "Workspace Admin",
-      email: user?.email || "admin@company.com",
-      role: "owner",
-      created_at: new Date().toISOString(),
-      status: "Active",
-    },
-    {
-      id: "mem-2",
-      name: "Alex Mercer",
-      email: "alex@company.com",
-      role: "operator",
-      created_at: new Date().toISOString(),
-      status: "Active",
-    },
-  ]);
+  const [members, setMembers] = useState([]);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("member");
@@ -60,23 +47,43 @@ export default function OperonSettingsView() {
     operonApi.auth
       .getMembers?.()
       .then((data) => {
-        if (data && data.length > 0) {
-          setMembers(data);
-        }
+        setMembers(Array.isArray(data) ? data : []);
       })
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    setWorkspaceName(activeWorkspace?.name || "");
+  }, [activeWorkspace?.id, activeWorkspace?.name]);
+
+  useEffect(() => {
+    if (activeTab !== "api_keys") return;
+
+    let cancelled = false;
+    setGeneratedApiKey("");
+    setApiKeyStatus(null);
+    setApiKeyLoading(true);
+    setApiKeyError("");
+    operonApi.auth.getApiKey()
+      .then((status) => {
+        if (!cancelled) setApiKeyStatus(status);
+      })
+      .catch((error) => {
+        if (!cancelled) setApiKeyError(error.message || "Could not load API key status.");
+      })
+      .finally(() => {
+        if (!cancelled) setApiKeyLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, activeWorkspace?.id]);
+
   const handleSave = (e) => {
     e.preventDefault();
-    setSavedMsg("Workspace parameters saved and synced with tenant vault.");
+    setSavedMsg("Workspace profile persistence is not configured on the server yet; no changes were saved.");
     setTimeout(() => setSavedMsg(""), 3500);
-  };
-
-  const handleCopyKey = () => {
-    setCopiedKey(true);
-    navigator.clipboard?.writeText("opr_live_sec_991823746a5b4c3d2e1f");
-    setTimeout(() => setCopiedKey(false), 2000);
   };
 
   const handleSendInvite = async (e) => {
@@ -86,8 +93,6 @@ export default function OperonSettingsView() {
     setInviteFeedback(null);
 
     const companyName = activeWorkspace?.name || "Operon Workspace";
-    const senderName = user?.full_name || user?.email || "Workspace Administrator";
-
     try {
       const res = await operonApi.auth.inviteMember({
         email: inviteEmail.trim(),
@@ -96,21 +101,15 @@ export default function OperonSettingsView() {
 
       setInviteFeedback({
         type: "success",
-        msg: res?.message || `${senderName} has sent an invite to ${inviteEmail} to join ${companyName} on Operon.`,
+        msg: res?.message || `Invitation recorded for ${inviteEmail} in ${companyName}.`,
       });
 
-      // Add to members list
-      setMembers((prev) => [
-        ...prev,
-        {
-          id: `mem-${Date.now()}`,
-          name: inviteEmail.split("@")[0].replace(".", " ").toUpperCase(),
-          email: inviteEmail.trim(),
-          role: inviteRole,
-          created_at: new Date().toISOString(),
-          status: "Invited",
-        },
-      ]);
+      try {
+        const currentMembers = await operonApi.auth.getMembers();
+        setMembers(Array.isArray(currentMembers) ? currentMembers : []);
+      } catch {
+        // Keep the database-confirmed invite response; member refresh can retry on page load.
+      }
 
       setTimeout(() => {
         setInviteEmail("");
@@ -118,32 +117,48 @@ export default function OperonSettingsView() {
         setInviteFeedback(null);
       }, 2500);
     } catch (err) {
-      // Resilient fallback if offline/mock
-      const simulatedMsg = `${senderName} has sent an invite to ${inviteEmail} to join ${companyName} on Operon.`;
       setInviteFeedback({
-        type: "success",
-        msg: simulatedMsg,
+        type: "error",
+        msg: err.message || "The invitation could not be recorded.",
       });
-
-      setMembers((prev) => [
-        ...prev,
-        {
-          id: `mem-${Date.now()}`,
-          name: inviteEmail.split("@")[0].replace(".", " "),
-          email: inviteEmail.trim(),
-          role: inviteRole,
-          created_at: new Date().toISOString(),
-          status: "Invited",
-        },
-      ]);
-
-      setTimeout(() => {
-        setInviteEmail("");
-        setShowInviteModal(false);
-        setInviteFeedback(null);
-      }, 2500);
     } finally {
       setInviting(false);
+    }
+  };
+
+  const handleGenerateApiKey = async () => {
+    if (
+      apiKeyStatus?.has_api_key &&
+      !window.confirm("Rotating this key will immediately invalidate the currently active key. Continue?")
+    ) {
+      return;
+    }
+
+    setApiKeyLoading(true);
+    setApiKeyError("");
+    setGeneratedApiKey("");
+    try {
+      const result = await operonApi.auth.generateApiKey();
+      setGeneratedApiKey(result.api_key);
+      setApiKeyStatus({
+        has_api_key: true,
+        key_prefix: result.key_prefix,
+        rotated_at: result.rotated_at,
+      });
+    } catch (error) {
+      setApiKeyError(error.message || "Could not generate an API key.");
+    } finally {
+      setApiKeyLoading(false);
+    }
+  };
+
+  const handleCopyApiKey = async () => {
+    try {
+      await navigator.clipboard.writeText(generatedApiKey);
+      setApiKeyCopied(true);
+      window.setTimeout(() => setApiKeyCopied(false), 2000);
+    } catch {
+      setApiKeyError("Could not copy the API key. Select and copy it manually.");
     }
   };
 
@@ -155,13 +170,13 @@ export default function OperonSettingsView() {
           Workspace Settings & Administration
         </h1>
         <p className="text-sm text-slate-500 dark:text-gray-400 mt-1">
-          Manage company workspace profiles, team membership, security boundaries, and API vault keys.
+          Manage workspace profile, team membership, and security settings.
         </p>
       </div>
 
       {savedMsg && (
-        <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 text-emerald-700 dark:text-emerald-400 text-sm flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+        <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 text-amber-800 dark:text-amber-300 text-sm flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
           <span>{savedMsg}</span>
         </div>
       )}
@@ -212,7 +227,7 @@ export default function OperonSettingsView() {
               <input
                 type="text"
                 disabled
-                value={activeWorkspace?.id || "org-01938b4c-9f82"}
+                value={activeWorkspace?.id || ""}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 font-mono text-xs text-slate-500 dark:text-gray-400"
               />
               <p className="text-xs text-slate-500 dark:text-gray-400 mt-1">Immutable organization reference used across multi-tenant database records.</p>
@@ -226,6 +241,7 @@ export default function OperonSettingsView() {
                   onChange={(e) => setBusinessTimezone(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-gray-200 focus:outline-none focus:border-cyan-500 text-sm"
                 >
+                  <option value="">Not configured</option>
                   <option value="America/New_York (UTC-5)">America/New_York (UTC-5)</option>
                   <option value="America/Los_Angeles (UTC-8)">America/Los_Angeles (UTC-8)</option>
                   <option value="Europe/London (UTC+0)">Europe/London (UTC+0)</option>
@@ -239,6 +255,7 @@ export default function OperonSettingsView() {
                   onChange={(e) => setRetentionDays(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-gray-200 focus:outline-none focus:border-cyan-500 text-sm"
                 >
+                  <option value="">Not configured</option>
                   <option value="30">30 Days</option>
                   <option value="90">90 Days (Enterprise Default)</option>
                   <option value="365">1 Year (Compliance)</option>
@@ -333,7 +350,7 @@ export default function OperonSettingsView() {
                 <span className="font-semibold text-slate-800 dark:text-gray-200 block text-sm">Read-Only Database Enforcement</span>
                 <span className="text-slate-500 dark:text-gray-400 text-xs">Disallows destructive mutations (DROP, ALTER, DELETE, UPDATE) on customer SQL connectors.</span>
               </div>
-              <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20 font-semibold text-xs shrink-0 ml-3">Enforced</span>
+                <span className="px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300 border border-amber-200 dark:border-amber-500/20 font-semibold text-xs shrink-0 ml-3">Not configured</span>
             </div>
 
             <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 flex items-center justify-between">
@@ -347,7 +364,7 @@ export default function OperonSettingsView() {
             <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 flex items-center justify-between">
               <div>
                 <span className="font-semibold text-slate-800 dark:text-gray-200 block text-sm">Human-in-the-Loop Financial Gating</span>
-                <span className="text-slate-500 dark:text-gray-400 text-xs">Refunds over $50 and contract discount offers pause for manager approval.</span>
+                <span className="text-slate-500 dark:text-gray-400 text-xs">Actions marked as requiring approval pause for a human decision.</span>
               </div>
               <span className="px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400 border border-blue-200 dark:border-blue-500/20 font-semibold text-xs shrink-0 ml-3">Active</span>
             </div>
@@ -359,28 +376,84 @@ export default function OperonSettingsView() {
       {activeTab === "api_keys" && (
         <div className="bg-white dark:bg-slate-900/60 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 max-w-2xl space-y-5 text-sm shadow-xs">
           <div>
-            <h3 className="text-base font-semibold text-slate-900 dark:text-gray-100">Operon Platform API Key</h3>
-            <p className="text-slate-500 dark:text-gray-400 mt-0.5 text-xs">Use this secret key to authenticate webhooks and dispatch workflow triggers programmatically.</p>
+            <h3 className="text-base font-semibold text-slate-900 dark:text-gray-100">Your Operon API Key</h3>
+            <p className="text-slate-500 dark:text-gray-400 mt-0.5 text-xs">
+              Generate a personal key for {user?.email || "your account"}. It can trigger agents in this workspace only.
+            </p>
           </div>
 
-          <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 space-y-2.5">
-            <span className="text-xs uppercase font-bold text-slate-500 dark:text-gray-400 tracking-wider">Production Key</span>
-            <div className="flex items-center gap-2">
-              <input
-                type="password"
-                readOnly
-                value="opr_live_sec_991823746a5b4c3d2e1f"
-                className="flex-1 px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-mono text-xs text-slate-800 dark:text-gray-200"
-              />
-              <button
-                onClick={handleCopyKey}
-                className="px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-gray-200 font-medium transition flex items-center gap-1.5 shrink-0 text-xs"
-              >
-                {copiedKey ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-                {copiedKey ? "Copied" : "Copy"}
-              </button>
+          {apiKeyError && (
+            <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
+              {apiKeyError}
+            </p>
+          )}
+
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900/50 dark:text-slate-300">
+            {apiKeyLoading ? (
+              <span className="flex items-center gap-2"><RefreshCw className="h-4 w-4 animate-spin" /> Loading API key status…</span>
+            ) : apiKeyStatus?.has_api_key ? (
+              <div>
+                <p>
+                  Personal key active for this workspace: <code className="font-mono">{apiKeyStatus.key_prefix}…</code>
+                </p>
+                {apiKeyStatus.rotated_at && (
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                    Generated {new Date(apiKeyStatus.rotated_at).toLocaleString()}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p>No API key has been generated for your account in this workspace.</p>
+            )}
+          </div>
+
+          {generatedApiKey && (
+            <div className="space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-500/30 dark:bg-amber-500/10">
+              <p className="font-semibold text-amber-900 dark:text-amber-200">
+                Copy this key now. It will not be shown again.
+              </p>
+              <div className="flex gap-2">
+                <input
+                  readOnly
+                  value={generatedApiKey}
+                  aria-label="Generated API key"
+                  className="min-w-0 flex-1 rounded-lg border border-amber-300 bg-white px-3 py-2 font-mono text-xs text-slate-900 dark:border-amber-500/30 dark:bg-slate-950 dark:text-slate-100"
+                />
+                <button
+                  type="button"
+                  onClick={handleCopyApiKey}
+                  className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-700"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  {apiKeyCopied ? "Copied" : "Copy"}
+                </button>
+              </div>
             </div>
-            <p className="text-xs text-slate-500 dark:text-gray-400">Do not share this key in client-side code or public repositories.</p>
+          )}
+
+          <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
+            <h4 className="font-semibold text-slate-900 dark:text-slate-100">Trigger an agent</h4>
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+              Send the key as a Bearer token. The key is scoped to this workspace and can only start agent runs.
+            </p>
+            <pre className="mt-3 overflow-x-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-200">
+{`curl -X POST "${API_BASE_URL}/api/v1/runs/trigger" \\
+  -H "Authorization: Bearer <YOUR_OPERON_API_KEY>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"agent_id":"<AGENT_ID>","input_payload":{"subject":"Task title","body":"Task details"}}'`}
+            </pre>
+          </div>
+
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={handleGenerateApiKey}
+              disabled={apiKeyLoading}
+              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:from-cyan-500 hover:to-indigo-500 disabled:opacity-50"
+            >
+              <Key className="h-4 w-4" />
+              {apiKeyLoading ? "Generating…" : apiKeyStatus?.has_api_key ? "Rotate API Key" : "Generate API Key"}
+            </button>
           </div>
         </div>
       )}

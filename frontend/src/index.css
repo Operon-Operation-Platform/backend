@@ -29,6 +29,18 @@
   --red-50:     #FEF2F2;
 }
 
+html.dark {
+  color-scheme: dark;
+  --bg-primary:   #020617;
+  --bg-secondary: #0F172A;
+  --bg-subtle:    #1E293B;
+  --text-primary:   #F1F5F9;
+  --text-secondary: #CBD5E1;
+  --text-muted:     #94A3B8;
+  --border:         #334155;
+  --border-strong:  #475569;
+}
+
 /* ── Base ──────────────────────────────────────────────────── */
 html {
   background: var(--bg-primary);
@@ -60,7 +72,7 @@ body {
 
 /* ── Enterprise surface utilities ──────────────────────────── */
 .surface-card {
-  background: #FFFFFF;
+  background: var(--bg-primary);
   border: 1px solid var(--border);
   border-radius: 0.75rem;
   box-shadow: 0 1px 2px 0 rgba(15,23,42,0.04);
@@ -70,6 +82,77 @@ body {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: 0.5rem;
+}
+
+html.dark body {
+  color: var(--text-primary);
+  background: var(--bg-primary);
+}
+
+html.dark .btn-secondary {
+  @apply bg-slate-900 hover:bg-slate-800 active:bg-slate-700 text-slate-200 border-slate-700;
+}
+
+html.dark .btn-ghost {
+  @apply text-slate-300 hover:text-white hover:bg-slate-800;
+}
+
+html.dark .input-field {
+  @apply bg-slate-900 border-slate-700 text-slate-100 placeholder:text-slate-500;
+}
+
+html.dark .input-label {
+  @apply text-slate-300;
+}
+
+html.dark .sidebar-item {
+  @apply text-slate-300 hover:text-white hover:bg-slate-800;
+}
+
+html.dark .sidebar-item-active {
+  @apply bg-blue-500/15 text-blue-300;
+}
+
+html.dark .skeleton {
+  background: linear-gradient(90deg, #1E293B 25%, #334155 50%, #1E293B 75%);
+  background-size: 200% 100%;
+}
+
+html.dark .operon-themed-view .bg-white,
+html.dark .operon-themed-view .bg-slate-50 {
+  background-color: #0F172A;
+}
+
+html.dark .operon-themed-view .bg-slate-100 {
+  background-color: #1E293B;
+}
+
+html.dark .operon-themed-view .text-slate-900,
+html.dark .operon-themed-view .text-slate-800 {
+  color: #E2E8F0;
+}
+
+html.dark .operon-themed-view .text-slate-700,
+html.dark .operon-themed-view .text-slate-600 {
+  color: #CBD5E1;
+}
+
+html.dark .operon-themed-view .text-slate-500 {
+  color: #94A3B8;
+}
+
+html.dark .operon-themed-view .border-slate-200 {
+  border-color: #334155;
+}
+
+html.dark .operon-themed-view .border-slate-300 {
+  border-color: #475569;
+}
+
+html.dark .operon-themed-view [class~="hover:bg-slate-50"]:hover,
+html.dark .operon-themed-view [class~="hover:bg-slate-50/80"]:hover,
+html.dark .operon-themed-view [class~="hover:bg-slate-50/60"]:hover {
+  background-color: #1E293B;
 }
 
 /* ── Glass — modals & overlays only ────────────────────────── */

@@ -14,6 +14,8 @@ export function OperonProvider({ children }) {
   const [workspaces, setWorkspaces] = useState([]);
   const [activeWorkspace, setActiveWorkspace] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [sessionError, setSessionError] = useState("");
+  const [sessionExpired, setSessionExpired] = useState(false);
 
   // Global platform state
   const [agents, setAgents] = useState([]);
@@ -29,17 +31,38 @@ export function OperonProvider({ children }) {
     const token = getOperonToken();
     if (!token) {
       setUser(null);
+      setSessionError("");
+      setSessionExpired(false);
       setLoading(false);
       return;
     }
 
+    setSessionError("");
+    setSessionExpired(false);
     try {
       const data = await operonApi.auth.getMe();
-      setUser(data.user);
+      const sessionUser = data?.user ?? (
+        data && typeof data === "object" && ("id" in data || "email" in data)
+          ? data
+          : null
+      );
+      if (!sessionUser) {
+        const fields = data && typeof data === "object" ? Object.keys(data).join(", ") : typeof data;
+        throw new Error(
+          `Unexpected response from /api/v1/auth/me: HTTP 200 JSON did not include a user (received: ${fields || "empty object"}).`,
+        );
+      }
+      setUser(sessionUser);
       setWorkspaces(data.workspaces || []);
       setActiveWorkspace(data.active_workspace);
-    } catch {
-      setOperonToken(null);
+    } catch (error) {
+      if (error.status === 401) {
+        setOperonToken(null);
+        setSessionExpired(true);
+        setSessionError("The server rejected the saved session token. Please sign in again.");
+      } else {
+        setSessionError(error.message || "Unable to verify your session.");
+      }
       setUser(null);
     } finally {
       setLoading(false);
@@ -58,7 +81,7 @@ export function OperonProvider({ children }) {
         await Promise.allSettled([
           operonApi.agents.getAgents(),
           operonApi.runs.getRuns(),
-          operonApi.approvals.getApprovals("pending"),
+          operonApi.approvals.getApprovals(),
           operonApi.toolsAndMcp.getTools(),
           operonApi.toolsAndMcp.getMcpServers(),
           operonApi.toolsAndMcp.getToolRequests(),
@@ -81,6 +104,11 @@ export function OperonProvider({ children }) {
 
   const login = async (credentials) => {
     const data = await operonApi.auth.login(credentials);
+    if (!data?.access_token || !data?.user) {
+      throw new Error("The login response did not include a user and access token.");
+    }
+    setSessionError("");
+    setSessionExpired(false);
     setOperonToken(data.access_token);
     setUser(data.user);
     setWorkspaces(data.workspaces || []);
@@ -91,6 +119,11 @@ export function OperonProvider({ children }) {
 
   const signup = async (payload) => {
     const data = await operonApi.auth.signup(payload);
+    if (!data?.access_token || !data?.user) {
+      throw new Error("The signup response did not include a user and access token.");
+    }
+    setSessionError("");
+    setSessionExpired(false);
     setOperonToken(data.access_token);
     setUser(data.user);
     setWorkspaces(data.workspaces || []);
@@ -111,13 +144,13 @@ export function OperonProvider({ children }) {
   };
 
   const switchWorkspace = async (workspaceId) => {
-    try {
-      await operonApi.auth.switchWorkspace(workspaceId);
-      const me = await operonApi.auth.getMe();
-      setActiveWorkspace(me.active_workspace);
-      setWorkspaces(me.workspaces || []);
-      await refreshData();
-    } catch {}
+    const data = await operonApi.auth.switchWorkspace(workspaceId);
+    if (!data?.access_token || !data?.active_workspace) {
+      throw new Error("Workspace switch response did not include a session token and workspace.");
+    }
+    setOperonToken(data.access_token);
+    setActiveWorkspace(data.active_workspace);
+    await refreshData();
   };
 
   return (
@@ -127,6 +160,9 @@ export function OperonProvider({ children }) {
         workspaces,
         activeWorkspace,
         loading,
+        sessionError,
+        sessionExpired,
+        checkSession,
         agents,
         runs,
         approvals,

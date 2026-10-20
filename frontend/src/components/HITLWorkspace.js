@@ -272,9 +272,8 @@ export default function HITLWorkspace({
     }
   };
 
-  // Safe defaults for RAG evaluations
-  const groundingVal = ticket.groundingScore ?? 0.95;
-  const relevanceVal = ticket.relevanceScore ?? 0.92;
+  const groundingVal = ticket.groundingScore ?? null;
+  const relevanceVal = ticket.relevanceScore ?? null;
 
   const groupedDocs = {
     dense:
@@ -1357,15 +1356,14 @@ export default function HITLWorkspace({
 
                           _jsxs("p", {
                             className: `text-lg font-mono font-black mt-1 ${
-                              groundingVal >= 0.9
-                                ? "text-emerald-500"
-                                : "text-amber-500"
+                              groundingVal == null
+                                ? "text-zinc-500"
+                                : groundingVal >= 0.9
+                                  ? "text-emerald-500"
+                                  : "text-amber-500"
                             }`,
                             children: [
-                              (groundingVal * 100).toFixed(
-                                0,
-                              ),
-                              "%",
+                              groundingVal == null ? "N/A" : `${(groundingVal * 100).toFixed(0)}%`,
                             ],
                           }),
                         ],
@@ -1386,15 +1384,14 @@ export default function HITLWorkspace({
 
                           _jsxs("p", {
                             className: `text-lg font-mono font-black mt-1 ${
-                              relevanceVal >= 0.9
-                                ? "text-emerald-500"
-                                : "text-amber-500"
+                              relevanceVal == null
+                                ? "text-zinc-500"
+                                : relevanceVal >= 0.9
+                                  ? "text-emerald-500"
+                                  : "text-amber-500"
                             }`,
                             children: [
-                              (relevanceVal * 100).toFixed(
-                                0,
-                              ),
-                              "%",
+                              relevanceVal == null ? "N/A" : `${(relevanceVal * 100).toFixed(0)}%`,
                             ],
                           }),
                         ],

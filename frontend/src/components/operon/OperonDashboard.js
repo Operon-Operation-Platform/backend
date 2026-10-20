@@ -1,24 +1,25 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { operonApi } from "../../api/operon";
 import {
-  Bot, Plus, Play, CheckCircle2, Activity, TrendingUp,
+  Bot, Plus, CheckCircle2, Activity, TrendingUp,
   ShieldAlert, Sparkles, ChevronRight, ArrowUpRight,
   Cpu,
 } from "lucide-react";
 
 const STATUS_CONFIG = {
-  running:   { color: "text-emerald-600 dark:text-emerald-400", bg: "bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20", dot: "bg-emerald-500", label: "Running" },
-  succeeded: { color: "text-blue-600 dark:text-blue-400",    bg: "bg-blue-50 dark:bg-blue-500/10 border-blue-200 dark:border-blue-500/20",       dot: "bg-blue-500",    label: "Succeeded" },
-  failed:    { color: "text-red-600 dark:text-red-400",     bg: "bg-red-50 dark:bg-red-500/10 border-red-200 dark:border-red-500/20",          dot: "bg-red-500",     label: "Failed" },
-  paused:    { color: "text-amber-600 dark:text-amber-400",   bg: "bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/20",      dot: "bg-amber-500",   label: "Paused" },
-  pending:   { color: "text-slate-500 dark:text-gray-400",   bg: "bg-slate-100 dark:bg-slate-500/10 border-slate-200 dark:border-slate-500/20",      dot: "bg-slate-400",   label: "Pending" },
+  running:   { color: "text-emerald-700 dark:text-emerald-400", bg: "bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20", dot: "bg-emerald-600", label: "Running" },
+  succeeded: { color: "text-blue-700 dark:text-blue-400",    bg: "bg-blue-50 dark:bg-blue-500/10 border-blue-200 dark:border-blue-500/20",       dot: "bg-blue-600",    label: "Succeeded" },
+  failed:    { color: "text-red-700 dark:text-red-400",     bg: "bg-red-50 dark:bg-red-500/10 border-red-200 dark:border-red-500/20",          dot: "bg-red-600",     label: "Failed" },
+  paused:    { color: "text-amber-700 dark:text-amber-400",   bg: "bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/20",      dot: "bg-amber-600",   label: "Paused" },
+  pending:   { color: "text-slate-600 dark:text-gray-400",   bg: "bg-slate-100 dark:bg-slate-500/10 border-slate-200 dark:border-slate-500/20",      dot: "bg-slate-500",   label: "Pending" },
 };
 
 const TEMPLATE_META = {
-  customer_support: { color: "from-cyan-500 to-blue-600",    icon: "🎧", label: "Customer Support" },
-  sales:            { color: "from-violet-500 to-purple-600", icon: "📈", label: "Sales" },
-  operations:       { color: "from-amber-500 to-orange-600",  icon: "⚙️",  label: "Operations" },
+  customer_support: { bg: "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border border-blue-200", icon: "🎧", label: "Customer Support" },
+  sales:            { bg: "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border border-blue-200", icon: "📈", label: "Sales & Triage" },
+  operations:       { bg: "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border border-blue-200", icon: "⚙️",  label: "Operations" },
 };
 
 function StatusBadge({ status }) {
@@ -52,44 +53,41 @@ function EmptyState({ onOpenWizard }) {
   return (
     <div className="flex flex-col items-center justify-center py-20 text-center bg-white dark:bg-slate-900/40 rounded-2xl border border-slate-200 dark:border-slate-800 p-8 shadow-xs">
       <div className="relative mb-6">
-        <div className="w-24 h-24 rounded-3xl bg-gradient-to-tr from-cyan-500/10 via-indigo-600/10 to-violet-600/10 flex items-center justify-center border border-slate-200 dark:border-slate-800">
-          <Bot className="w-12 h-12 text-slate-400 dark:text-gray-500" />
-        </div>
-        <div className="absolute -top-1 -right-1 w-8 h-8 rounded-xl bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-cyan-500/30">
-          <Sparkles className="w-4 h-4 text-white" />
+        <div className="w-20 h-20 rounded-2xl bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center border border-blue-200/80 dark:border-blue-800/40">
+          <Bot className="w-10 h-10 text-blue-600 dark:text-blue-400" />
         </div>
       </div>
-      <h2 className="text-2xl font-bold text-slate-900 dark:text-gray-100 mb-2">No agents created yet</h2>
+      <h2 className="text-xl font-bold text-slate-900 dark:text-gray-100 mb-2">No agents created yet</h2>
       <p className="text-slate-500 dark:text-gray-400 max-w-sm mb-6 text-sm leading-relaxed">
-        Create your first autonomous AI agent to automate customer inquiries, support workflows, or backend operations.
+        Deploy your first autonomous AI agent to automate customer inquiries, support workflows, or backend operations.
       </p>
       <button
         onClick={onOpenWizard}
-        className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white font-semibold shadow-lg shadow-cyan-600/20 transition transform active:scale-95 text-sm"
+        className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium shadow-sm transition active:scale-95 text-sm"
       >
-        <Plus className="w-5 h-5" />
+        <Plus className="w-4 h-4" />
         Create your first agent
       </button>
     </div>
   );
 }
 
-function AgentCard({ agent, onRunClick, onSelectAgent }) {
-  const meta = TEMPLATE_META[agent.template_key] || TEMPLATE_META.customer_support;
+function AgentCard({ agent, onSelectAgent }) {
+  const meta = TEMPLATE_META[agent.template_key] || { bg: "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800", icon: "🤖", label: agent.template_key || "Agent" };
   const isActive = agent.status === "active";
   return (
     <div
-      className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 hover:border-slate-300 dark:hover:border-slate-700 transition cursor-pointer group shadow-xs flex flex-col justify-between"
+      className="bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 hover:border-blue-300 dark:hover:border-blue-700 transition cursor-pointer group shadow-xs flex flex-col justify-between"
       onClick={() => onSelectAgent && onSelectAgent(agent)}
     >
       <div>
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-3">
-            <div className={`w-11 h-11 rounded-xl bg-gradient-to-br ${meta.color} flex items-center justify-center text-xl shadow-md`}>
+            <div className={`w-10 h-10 rounded-xl ${meta.bg} flex items-center justify-center text-lg shadow-xs`}>
               {meta.icon}
             </div>
             <div>
-              <h3 className="font-semibold text-slate-900 dark:text-gray-100 text-sm sm:text-base leading-tight group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors">
+              <h3 className="font-semibold text-slate-900 dark:text-gray-100 text-sm sm:text-base leading-tight group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
                 {agent.name}
               </h3>
               <p className="text-xs text-slate-500 dark:text-gray-400 mt-0.5">{meta.label}</p>
@@ -106,15 +104,10 @@ function AgentCard({ agent, onRunClick, onSelectAgent }) {
 
       <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
         <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-gray-400 font-medium">
-          <span className="flex items-center gap-1"><Activity className="w-3.5 h-3.5" />{agent.run_count ?? 0} runs</span>
-          <span className="flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />{agent.success_rate ?? "--"}%</span>
+          <span className="flex items-center gap-1"><Activity className="w-3.5 h-3.5 text-slate-400" />{agent.run_count ?? 0} runs</span>
+          <span className="flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5 text-blue-600" />{agent.success_rate == null ? "N/A" : `${agent.success_rate}%`}</span>
         </div>
-        <button
-          onClick={(e) => { e.stopPropagation(); onRunClick && onRunClick(agent); }}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 text-xs font-semibold transition"
-        >
-          <Play className="w-3 h-3" /> Run
-        </button>
+        <span className="text-xs font-medium text-blue-700 dark:text-blue-400">Open agent to test <ChevronRight className="inline h-3.5 w-3.5" /></span>
       </div>
     </div>
   );
@@ -128,19 +121,31 @@ export default function OperonDashboard({
   onOpenWizard,
   onOpenRun,
   onSelectAgent,
-  onTriggerRun,
   onApprovalClick,
 }) {
-  const activeAgents  = agents.filter(a => a.status === "active").length;
-  const totalRuns     = recentRuns.length;
-  const succeededRuns = recentRuns.filter(r => r.status === "succeeded").length;
-  const successRate   = totalRuns ? Math.round((succeededRuns / totalRuns) * 100) : 0;
+  const [dbStats, setDbStats] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+    operonApi.agents.getDashboardStats()
+      .then((res) => {
+        if (mounted && res) setDbStats(res);
+      })
+      .catch(() => {});
+    return () => { mounted = false; };
+  }, [agents.length, recentRuns.length, pendingApprovals.length]);
+
+  const activeAgents  = dbStats ? dbStats.active_agents : agents.filter(a => a.status === "active").length;
+  const totalAgents   = dbStats ? dbStats.total_agents : agents.length;
+  const totalRuns     = dbStats ? dbStats.total_runs : recentRuns.length;
+  const successRate   = dbStats ? dbStats.success_rate_percent : (totalRuns ? Math.round((recentRuns.filter(r => r.status === "succeeded").length / totalRuns) * 100) : null);
+  const approvalsCount = dbStats ? dbStats.pending_approvals : pendingApprovals.length;
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="flex flex-col items-center gap-3">
-          <div className="w-10 h-10 rounded-full border-2 border-cyan-500/30 border-t-cyan-500 animate-spin" />
+          <div className="w-9 h-9 rounded-full border-2 border-blue-600/30 border-t-blue-600 animate-spin" />
           <p className="text-slate-500 dark:text-gray-400 text-sm">Loading workspace…</p>
         </div>
       </div>
@@ -151,10 +156,10 @@ export default function OperonDashboard({
     <div className="space-y-8 animate-fade-in text-slate-800 dark:text-gray-200">
       {/* Metrics Row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard label="Active Agents"     value={activeAgents}              sub={`of ${agents.length} total`} icon={Cpu}         color="text-cyan-600 dark:text-cyan-400" />
-        <MetricCard label="Total Runs"        value={totalRuns}                 sub="last 7 days"                 icon={Activity}    color="text-emerald-600 dark:text-emerald-400" />
-        <MetricCard label="Success Rate"      value={`${successRate}%`}         sub="executions succeeded"        icon={TrendingUp}  color="text-blue-600 dark:text-blue-400" />
-        <MetricCard label="Pending Approvals" value={pendingApprovals.length}   sub="awaiting decision"           icon={ShieldAlert} color="text-amber-600 dark:text-amber-400" />
+        <MetricCard label="Active Agents"     value={activeAgents}              sub={`of ${totalAgents} total`}   icon={Cpu}         color="text-blue-600 dark:text-blue-400" />
+        <MetricCard label="Total Runs"        value={totalRuns}                 sub="total executions"            icon={Activity}    color="text-slate-800 dark:text-slate-200" />
+        <MetricCard label="Success Rate"      value={successRate == null ? "N/A" : `${successRate}%`}         sub="executions succeeded"        icon={TrendingUp}  color="text-emerald-600 dark:text-emerald-400" />
+        <MetricCard label="Pending Approvals" value={approvalsCount}            sub="awaiting decision"           icon={ShieldAlert} color="text-amber-600 dark:text-amber-400" />
       </div>
 
       {/* Approvals Banner */}
@@ -192,7 +197,7 @@ export default function OperonDashboard({
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {agents.map(agent => (
-              <AgentCard key={agent.id} agent={agent} onRunClick={onTriggerRun} onSelectAgent={onSelectAgent} />
+              <AgentCard key={agent.id} agent={agent} onSelectAgent={onSelectAgent} />
             ))}
           </div>
         )}
@@ -218,16 +223,16 @@ export default function OperonDashboard({
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {recentRuns.slice(0, 10).map(run => (
-                  <tr key={run.run_id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition group">
+                  <tr key={run.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition group">
                     <td className="px-5 py-3.5">
                       <div className="font-semibold text-slate-900 dark:text-gray-100 text-sm">{run.agent_name || run.agent_id}</div>
-                      <div className="text-xs text-slate-500 dark:text-gray-400 font-mono truncate max-w-[140px]">{run.run_id}</div>
+                      <div className="text-xs text-slate-500 dark:text-gray-400 font-mono truncate max-w-[140px]">{run.id}</div>
                     </td>
                     <td className="px-5 py-3.5"><StatusBadge status={run.status} /></td>
                     <td className="px-5 py-3.5 text-slate-600 dark:text-gray-300 text-xs">{run.duration_ms ? `${(run.duration_ms / 1000).toFixed(2)}s` : "--"}</td>
                     <td className="px-5 py-3.5 text-slate-500 dark:text-gray-400 text-xs hidden md:table-cell">{run.started_at ? new Date(run.started_at).toLocaleString() : "--"}</td>
                     <td className="px-5 py-3.5 text-right">
-                      <button onClick={() => onOpenRun && onOpenRun(run)} className="opacity-0 group-hover:opacity-100 flex items-center gap-1 text-xs font-semibold text-cyan-600 dark:text-cyan-400 hover:text-cyan-500 transition ml-auto">
+                      <button onClick={() => onOpenRun && onOpenRun(run)} className="opacity-0 group-hover:opacity-100 flex items-center gap-1 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-700 transition ml-auto">
                         Inspect <ArrowUpRight className="w-3 h-3" />
                       </button>
                     </td>

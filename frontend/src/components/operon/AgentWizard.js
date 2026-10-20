@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   X,
   ChevronRight,
@@ -39,6 +39,8 @@ export default function AgentWizard({ onClose, onAgentCreated, onCreated }) {
   const handleAgentCreated = onCreated || onAgentCreated;
   const [currentStep, setCurrentStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [metadataLoading, setMetadataLoading] = useState(true);
+  const [metadataErrors, setMetadataErrors] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [branches, setBranches] = useState([]);
 
@@ -48,65 +50,96 @@ export default function AgentWizard({ onClose, onAgentCreated, onCreated }) {
   const [agentDescription, setAgentDescription] = useState('');
   const [instructions, setInstructions] = useState('');
   const [businessHours, setBusinessHours] = useState('24/7');
-  const [escalationContact, setEscalationContact] = useState('support-lead@acme.com');
+  const [escalationContact, setEscalationContact] = useState('');
   const [selectedBranch, setSelectedBranch] = useState('');
   
   // Integrations state
   const [integrationsCatalog, setIntegrationsCatalog] = useState([]);
-  const [enabledIntegrations, setEnabledIntegrations] = useState(['email']);
+  const [enabledIntegrations, setEnabledIntegrations] = useState([]);
 
   // Data Source & Knowledge state
   const [dbType, setDbType] = useState('postgres');
   const [retrievalMode, setRetrievalMode] = useState('hybrid');
-  const [allowlistedTables, setAllowlistedTables] = useState('customers, orders, tickets, products');
+  const [allowlistedTables, setAllowlistedTables] = useState('');
   const [readOnlyDb, setReadOnlyDb] = useState(true);
 
   // Tools & MCP state
   const [availableTools, setAvailableTools] = useState([]);
-  const [enabledTools, setEnabledTools] = useState(['search_knowledge', 'check_order', 'query_approved_database']);
+  const [enabledTools, setEnabledTools] = useState([]);
   const [mcpServerUrl, setMcpServerUrl] = useState('');
   const [discoveredMcpTools, setDiscoveredMcpTools] = useState([]);
   const [showToolRequestModal, setShowToolRequestModal] = useState(false);
   const [toolRequestForm, setToolRequestForm] = useState({ name: '', description: '', use_case: '' });
 
   // Test & Activate state
-  const [testInput, setTestInput] = useState({
-    subject: "Card charged twice for Pro plan",
-    body: "I noticed duplicate charges on invoice #1042. Can you review and refund the duplicate?",
-    account_tier: "Pro",
-  });
+  const [testInput, setTestInput] = useState({ subject: "", body: "", account_tier: "" });
   const [testResult, setTestResult] = useState(null);
   const [testLoading, setTestLoading] = useState(false);
 
-  useEffect(() => {
-    loadInitialData();
-  }, [selectedTemplate]);
-
-  const loadInitialData = async () => {
-    try {
-      const [tmplRes, branchRes, catalogRes, toolsRes] = await Promise.all([
+  const loadInitialData = useCallback(async () => {
+    setMetadataLoading(true);
+    const results = await Promise.allSettled([
         operonApi.agents.getTemplates(),
         operonApi.auth.getBranches(),
-        operonApi.integrations.getCatalog(selectedTemplate),
         operonApi.toolsAndMcp.getTools(),
-      ]);
-      setTemplates(tmplRes || []);
-      setBranches(branchRes || []);
-      setIntegrationsCatalog(catalogRes || []);
-      setAvailableTools(toolsRes || []);
+    ]);
+    const errors = [];
 
-      // Pre-fill defaults from template
-      const currentTmpl = tmplRes?.find((t) => t.key === selectedTemplate);
-      if (currentTmpl && !agentName) {
-        setAgentName(currentTmpl.name);
-        setAgentDescription(currentTmpl.description);
-        setInstructions(currentTmpl.default_instructions);
-        setEnabledTools(currentTmpl.default_tools || []);
+    if (results[0].status === 'fulfilled') {
+      const templateList = results[0].value || [];
+      setTemplates(templateList);
+      const currentTemplate = templateList.find((template) => template.key === selectedTemplate);
+      if (currentTemplate) {
+        setAgentName((current) => current || currentTemplate.name);
+        setAgentDescription((current) => current || currentTemplate.description);
+        setInstructions((current) => current || currentTemplate.default_instructions);
+        setEnabledTools((current) => current.length ? current : currentTemplate.default_tools || []);
+        setEnabledIntegrations(currentTemplate.recommended_integrations || []);
       }
-    } catch (e) {
-      console.error("Error loading wizard metadata:", e);
+    } else {
+      errors.push(`Agent templates: ${results[0].reason?.message || 'Unable to load templates.'}`);
     }
-  };
+
+    if (results[1].status === 'fulfilled') {
+      setBranches(results[1].value || []);
+    } else {
+      errors.push(`Branches: ${results[1].reason?.message || 'Unable to load branches.'}`);
+    }
+
+    if (results[2].status === 'fulfilled') {
+      setAvailableTools(results[2].value || []);
+    } else {
+      errors.push(`Tools: ${results[2].reason?.message || 'Unable to load tools.'}`);
+    }
+    setMetadataErrors((current) => [
+      ...current.filter((message) => message.startsWith('Integrations:')),
+      ...errors,
+    ]);
+    setMetadataLoading(false);
+  }, [selectedTemplate]);
+
+  const loadIntegrationCatalog = useCallback(async () => {
+    setIntegrationsCatalog([]);
+    setMetadataErrors((current) => current.filter((message) => !message.startsWith('Integrations:')));
+    try {
+      const catalog = await operonApi.integrations.getCatalog(selectedTemplate);
+      setIntegrationsCatalog(catalog || []);
+      setMetadataErrors((current) => current.filter((message) => !message.startsWith('Integrations:')));
+    } catch (error) {
+      setMetadataErrors((current) => [
+        ...current.filter((message) => !message.startsWith('Integrations:')),
+        `Integrations: ${error.message || 'Unable to load integrations.'}`,
+      ]);
+    }
+  }, [selectedTemplate]);
+
+  useEffect(() => {
+    loadInitialData();
+  }, [loadInitialData]);
+
+  useEffect(() => {
+    loadIntegrationCatalog();
+  }, [loadIntegrationCatalog]);
 
   const handleTemplateSelect = (tmplKey) => {
     setSelectedTemplate(tmplKey);
@@ -116,6 +149,7 @@ export default function AgentWizard({ onClose, onAgentCreated, onCreated }) {
       setAgentDescription(tmpl.description);
       setInstructions(tmpl.default_instructions);
       setEnabledTools(tmpl.default_tools || []);
+      setEnabledIntegrations(tmpl.recommended_integrations || []);
     }
   };
 
@@ -136,10 +170,7 @@ export default function AgentWizard({ onClose, onAgentCreated, onCreated }) {
         server_url: mcpServerUrl,
         transport_type: "sse",
       });
-      setDiscoveredMcpTools(res.discovered_tools_count ? [
-        { name: "mcp_database_lookup", approved: false },
-        { name: "mcp_sentiment_analyzer", approved: false },
-      ] : []);
+      setDiscoveredMcpTools(res.discovered_tools || []);
     } catch (e) {
       alert("Error connecting to MCP server: " + e.message);
     } finally {
@@ -150,27 +181,8 @@ export default function AgentWizard({ onClose, onAgentCreated, onCreated }) {
   const handleRunTest = async () => {
     setTestLoading(true);
     setTestResult(null);
-    try {
-      // Simulate/Trigger immediate validation run
-      const dummyRes = {
-        status: "succeeded",
-        latency_ms: 385,
-        steps: [
-          { name: "Vision & OCR", duration: 80, status: "completed" },
-          { name: "Intent Classification", duration: 110, status: "completed" },
-          { name: "Knowledge Retrieval", duration: 95, status: "completed" },
-          { name: "Resolution Synthesis", duration: 100, status: "completed" },
-        ],
-        draft_response: `Hello,\n\nThank you for contacting support regarding '${testInput.subject}'. We have verified your account tier (${testInput.account_tier}) and identified the duplicate invoice item. A refund request of $49 has been queued for human manager approval in compliance with your enterprise SLA.\n\nBest regards,\nOperon Support`,
-      };
-      setTimeout(() => {
-        setTestResult(dummyRes);
-        setTestLoading(false);
-      }, 600);
-    } catch (e) {
-      setTestResult({ status: "failed", error: e.message });
-      setTestLoading(false);
-    }
+    setTestResult({ status: "unavailable", error: "Save the agent before running a test. Test executions require a persisted agent and a live runtime." });
+    setTestLoading(false);
   };
 
   const handleSaveAndActivate = async (status = "active") => {
@@ -189,6 +201,11 @@ export default function AgentWizard({ onClose, onAgentCreated, onCreated }) {
         escalation_rules: {
           sla_hours: 2,
           l3_target: "jira",
+        },
+        model_config_settings: {
+          model: "llama-3-70b",
+          temperature: 0.2,
+          integration_keys: enabledIntegrations,
         },
         branch_ids: selectedBranch ? [selectedBranch] : [],
         status: status,
@@ -217,7 +234,7 @@ export default function AgentWizard({ onClose, onAgentCreated, onCreated }) {
             </div>
             <div>
               <h2 className="text-base font-bold text-white">Agent Setup Engine</h2>
-              <p className="text-xs text-slate-400">Shared multi-tenant runtime across Support, Sales, and Ops</p>
+              <p className="text-xs text-slate-400">Shared multi-tenant runtime across Help Desk, Sales, and Incident Response</p>
             </div>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition">
@@ -258,6 +275,25 @@ export default function AgentWizard({ onClose, onAgentCreated, onCreated }) {
 
         {/* Wizard Step Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {metadataErrors.length > 0 && (
+            <div role="alert" className="rounded-xl border border-amber-500/30 bg-amber-950/30 p-3 text-xs text-amber-200">
+              <p className="font-semibold">Some setup options could not be loaded.</p>
+              <ul className="mt-1 list-disc pl-5">
+                {metadataErrors.map((message) => <li key={message}>{message}</li>)}
+              </ul>
+              <button
+                type="button"
+                onClick={() => {
+                  loadInitialData();
+                  loadIntegrationCatalog();
+                }}
+                className="mt-2 font-semibold underline underline-offset-2"
+              >
+                Retry loading options
+              </button>
+            </div>
+          )}
+
           {/* STEP 1: CHOOSE TEMPLATE */}
           {currentStep === 1 && (
             <div className="space-y-4">
@@ -269,7 +305,11 @@ export default function AgentWizard({ onClose, onAgentCreated, onCreated }) {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
-                {templates.map((tmpl) => {
+                {metadataLoading && templates.length === 0 ? (
+                  <p className="md:col-span-3 text-sm text-slate-400">Loading agent templates…</p>
+                ) : templates.length === 0 ? (
+                  <p className="md:col-span-3 text-sm text-amber-300">No agent templates are available. Check that the API is running and try reloading.</p>
+                ) : templates.map((tmpl) => {
                   const isSelected = selectedTemplate === tmpl.key;
                   return (
                     <div
@@ -329,7 +369,7 @@ export default function AgentWizard({ onClose, onAgentCreated, onCreated }) {
                     type="text"
                     value={agentName}
                     onChange={(e) => setAgentName(e.target.value)}
-                    placeholder="e.g. Acme Tier-1 Customer Support Bot"
+                    placeholder="e.g. Customer Support Agent"
                     className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:border-cyan-500 focus:outline-none"
                   />
                 </div>
@@ -393,12 +433,22 @@ export default function AgentWizard({ onClose, onAgentCreated, onCreated }) {
               <div>
                 <h3 className="text-lg font-bold text-white">Step 3 — Authorize Integrations</h3>
                 <p className="text-sm text-slate-400">
-                  Connect third-party helpdesks, CRMs, or communications relevant to <span className="text-cyan-400 font-semibold">{selectedTemplate}</span>.
+                  Choose the integrations this agent can use. Credentials are configured on the backend and never sent to the browser.
                 </p>
               </div>
 
+              <p className="text-xs text-slate-500">
+                Selected integrations are saved with this agent. Add the listed environment variables to the backend environment to enable each provider.
+              </p>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
-                {integrationsCatalog.map((item) => {
+                {integrationsCatalog.length === 0 ? (
+                  <p className="sm:col-span-2 lg:col-span-3 text-sm text-slate-400">
+                    {metadataErrors.some((message) => message.startsWith('Integrations:'))
+                      ? "Integration options couldn't be loaded. Use “Retry loading options” above."
+                      : "Loading integrations for this agent type…"}
+                  </p>
+                ) : integrationsCatalog.map((item) => {
                   const isEnabled = enabledIntegrations.includes(item.key);
                   return (
                     <div
@@ -415,6 +465,16 @@ export default function AgentWizard({ onClose, onAgentCreated, onCreated }) {
                           </span>
                         </div>
                         <p className="text-xs text-slate-400 mb-4">{item.description}</p>
+                        {item.environment_variables?.length > 0 && (
+                          <div className="mb-3">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                              Backend environment
+                            </p>
+                            <p className="mt-1 break-words font-mono text-[10px] text-slate-400">
+                              {item.environment_variables.join(", ")}
+                            </p>
+                          </div>
+                        )}
                       </div>
 
                       <div className="flex items-center justify-between pt-3 border-t border-slate-800">
@@ -429,11 +489,12 @@ export default function AgentWizard({ onClose, onAgentCreated, onCreated }) {
                               : "bg-slate-800 text-slate-300 hover:bg-slate-700"
                           }`}
                         >
-                          {isEnabled ? "Connected" : "Connect"}
+                          {isEnabled ? "Selected" : "Select"}
                         </button>
                         {isEnabled && (
-                          <span className="text-[11px] text-emerald-400 flex items-center gap-1 font-medium">
-                            <CheckCircle2 className="w-3.5 h-3.5" /> Verified
+                          <span className={`text-[11px] flex items-center gap-1 font-medium ${item.configured ? "text-emerald-400" : "text-amber-300"}`}>
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            {item.configured ? "Environment ready" : "Needs configuration"}
                           </span>
                         )}
                       </div>
@@ -577,7 +638,7 @@ export default function AgentWizard({ onClose, onAgentCreated, onCreated }) {
                     type="text"
                     value={mcpServerUrl}
                     onChange={(e) => setMcpServerUrl(e.target.value)}
-                    placeholder="e.g. http://localhost:8001/mcp or sse://api.acme.com/mcp"
+                    placeholder="e.g. http://localhost:8001/mcp or sse://api.your-company.com/mcp"
                     className="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs font-mono focus:border-cyan-500 focus:outline-none"
                   />
                   <button
@@ -627,29 +688,29 @@ export default function AgentWizard({ onClose, onAgentCreated, onCreated }) {
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                 {/* Test Input Editor */}
-                <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3">
+                <div className="p-4 rounded-xl bg-white dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-3">
                   <div className="text-xs font-bold uppercase tracking-wider text-cyan-400 flex items-center justify-between">
-                    <span>Simulated Inquiry Payload</span>
+                    <span>Test Inquiry Payload</span>
                     <span className="text-slate-500 font-mono">POST /runs/trigger</span>
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-300 uppercase mb-1">Subject</label>
+                    <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">Subject</label>
                     <input
                       type="text"
                       value={testInput.subject}
                       onChange={(e) => setTestInput({ ...testInput, subject: e.target.value })}
-                      className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-white text-xs focus:outline-none"
+                      className="w-full px-3 py-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white text-xs focus:outline-none"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-300 uppercase mb-1">Body</label>
+                    <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">Body</label>
                     <textarea
                       rows={4}
                       value={testInput.body}
                       onChange={(e) => setTestInput({ ...testInput, body: e.target.value })}
-                      className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-white text-xs focus:outline-none"
+                      className="w-full px-3 py-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white text-xs focus:outline-none"
                     />
                   </div>
 
@@ -664,19 +725,19 @@ export default function AgentWizard({ onClose, onAgentCreated, onCreated }) {
                 </div>
 
                 {/* Execution Results View */}
-                <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3 flex flex-col justify-between">
+                <div className="p-4 rounded-xl bg-white dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-3 flex flex-col justify-between">
                   <div>
                     <div className="text-xs font-bold uppercase tracking-wider text-slate-300 mb-2 flex items-center justify-between">
                       <span>Execution Trace & Output</span>
                       {testResult && (
-                        <span className="text-xs text-emerald-400 font-semibold flex items-center gap-1">
+                        <span className="text-xs text-emerald-700 dark:text-emerald-400 font-semibold flex items-center gap-1">
                           <CheckCircle2 className="w-3.5 h-3.5" /> {testResult.latency_ms}ms
                         </span>
                       )}
                     </div>
 
                     {!testResult && !testLoading && (
-                      <div className="h-44 border border-dashed border-slate-800 rounded-xl flex items-center justify-center text-xs text-slate-500">
+                      <div className="h-44 border border-dashed border-slate-300 dark:border-slate-800 rounded-xl flex items-center justify-center text-xs text-slate-500 dark:text-slate-500">
                         Click "Run Test Execution" to validate agent before activation.
                       </div>
                     )}
@@ -690,6 +751,7 @@ export default function AgentWizard({ onClose, onAgentCreated, onCreated }) {
 
                     {testResult && (
                       <div className="space-y-3">
+                        {testResult.error && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">{testResult.error}</p>}
                         <div className="space-y-1">
                           {testResult.steps?.map((st, i) => (
                             <div key={i} className="flex items-center justify-between text-[11px] px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800">

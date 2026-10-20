@@ -20,11 +20,15 @@ import {
 import { operonApi } from "../../api/operon";
 
 const STATUS_CONFIG = {
+  queued:           { label: "Queued",            color: "text-slate-700 bg-slate-100 border-slate-200", dot: "bg-slate-500" },
+  pending:          { label: "Pending",           color: "text-slate-700 bg-slate-100 border-slate-200", dot: "bg-slate-500" },
   running:          { label: "Running",          color: "text-blue-700 bg-blue-50 border-blue-200",     dot: "bg-blue-600 animate-pulse" },
   succeeded:        { label: "Succeeded",        color: "text-emerald-700 bg-emerald-50 border-emerald-200", dot: "bg-emerald-600" },
   failed:           { label: "Failed",           color: "text-red-700 bg-red-50 border-red-200",         dot: "bg-red-600" },
+  waiting_for_approval: { label: "Needs Approval", color: "text-amber-700 bg-amber-50 border-amber-200", dot: "bg-amber-600" },
   waiting_approval: { label: "Needs Approval",   color: "text-amber-700 bg-amber-50 border-amber-200",   dot: "bg-amber-600" },
   paused:           { label: "Paused",           color: "text-slate-700 bg-slate-100 border-slate-200",   dot: "bg-slate-500" },
+  cancelled:        { label: "Cancelled",        color: "text-slate-700 bg-slate-100 border-slate-200",   dot: "bg-slate-500" },
 };
 
 const TEMPLATE_META = {
@@ -43,8 +47,8 @@ export default function RunsView({ runs = [], agents = [], onOpenRun, onRefresh 
   // Manual Trigger Modal
   const [showTriggerModal, setShowTriggerModal] = useState(false);
   const [triggerAgentId, setTriggerAgentId] = useState(agents[0]?.id || "");
-  const [triggerSubject, setTriggerSubject] = useState("Duplicate charge on monthly subscription");
-  const [triggerBody, setTriggerBody] = useState("Customer requested a refund on invoice #INV-8821. Please verify charge and check refund eligibility.");
+  const [triggerSubject, setTriggerSubject] = useState("");
+  const [triggerBody, setTriggerBody] = useState("");
   const [triggering, setTriggering] = useState(false);
 
   useEffect(() => {
@@ -98,7 +102,7 @@ export default function RunsView({ runs = [], agents = [], onOpenRun, onRefresh 
   });
 
   return (
-    <div className="space-y-6 pt-4 sm:pt-6 text-slate-800 dark:text-gray-200">
+    <div className="operon-themed-view space-y-6 pt-4 sm:pt-6 text-slate-800 dark:text-gray-200">
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-6 border-b border-slate-200 dark:border-slate-800">
         <div>
@@ -107,7 +111,7 @@ export default function RunsView({ runs = [], agents = [], onOpenRun, onRefresh 
               Live Agent Runs & Execution Traces
             </h1>
             <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20">
-              Live Telemetry
+              Workspace Runs
             </span>
           </div>
           <p className="text-sm text-slate-500 dark:text-gray-400 mt-1">
@@ -122,7 +126,7 @@ export default function RunsView({ runs = [], agents = [], onOpenRun, onRefresh 
               autoRefresh
                 ? "bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-400"
                 : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-gray-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-            }`}
+            } transition-colors duration-200`}
           >
             <span className={`w-2 h-2 rounded-full ${autoRefresh ? "bg-emerald-500 animate-ping" : "bg-slate-300 dark:bg-slate-600"}`} />
             Auto-refresh (4s)
@@ -130,7 +134,7 @@ export default function RunsView({ runs = [], agents = [], onOpenRun, onRefresh 
 
           <button
             onClick={onRefresh}
-            className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-gray-300 transition"
+            className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-gray-300 transition-colors duration-200"
             title="Refresh runs"
           >
             <RefreshCw className="w-4 h-4" />
@@ -139,7 +143,7 @@ export default function RunsView({ runs = [], agents = [], onOpenRun, onRefresh 
           <button
             onClick={() => setShowTriggerModal(true)}
             disabled={agents.length === 0}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white text-xs sm:text-sm font-semibold shadow-md shadow-blue-600/20 transition active:scale-95"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white text-xs sm:text-sm font-semibold shadow-md shadow-blue-600/20 transition-all duration-200 active:scale-95"
           >
             <Play className="w-3.5 h-3.5" />
             Trigger Test Run
@@ -148,7 +152,7 @@ export default function RunsView({ runs = [], agents = [], onOpenRun, onRefresh 
       </div>
 
       {/* Filters Bar */}
-      <div className="bg-white rounded-xl border border-slate-200 p-3.5 flex flex-wrap items-center gap-3 text-xs">
+      <div className="bg-white dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800 p-3.5 flex flex-wrap items-center gap-3 text-xs">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
           <input
@@ -156,14 +160,14 @@ export default function RunsView({ runs = [], agents = [], onOpenRun, onRefresh 
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by run ID, agent name, or subject..."
-            className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 focus:outline-none focus:border-blue-600 text-xs"
+            className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-gray-100 focus:outline-none focus:border-blue-600 text-xs"
           />
         </div>
 
         <select
           value={selectedAgentId}
           onChange={(e) => setSelectedAgentId(e.target.value)}
-          className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 focus:outline-none focus:border-blue-600"
+          className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-gray-200 focus:outline-none focus:border-blue-600"
         >
           <option value="">All Agents</option>
           {agents.map((a) => (
@@ -176,13 +180,13 @@ export default function RunsView({ runs = [], agents = [], onOpenRun, onRefresh 
         <select
           value={selectedStatus}
           onChange={(e) => setSelectedStatus(e.target.value)}
-          className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 focus:outline-none focus:border-blue-600"
+          className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-gray-200 focus:outline-none focus:border-blue-600"
         >
           <option value="">All Statuses</option>
           <option value="running">Running</option>
           <option value="succeeded">Succeeded</option>
           <option value="failed">Failed</option>
-          <option value="waiting_approval">Needs Approval</option>
+          <option value="waiting_for_approval">Needs Approval</option>
         </select>
 
         {(search || selectedAgentId || selectedStatus) && (
@@ -201,11 +205,11 @@ export default function RunsView({ runs = [], agents = [], onOpenRun, onRefresh 
 
       {/* Runs List Table */}
       {filteredRuns.length === 0 ? (
-        <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
+        <div className="bg-white dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800 p-12 text-center">
           <Activity className="w-10 h-10 text-slate-300 mx-auto mb-3" />
           <h3 className="text-sm font-semibold text-slate-900">No execution runs found</h3>
           <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 mb-4">
-            Trigger a manual test run or connect webhooks from Zendesk or Slack to begin processing automated workflows.
+            Trigger a run with input for one of your agents to see its real execution record here.
           </p>
           <button
             onClick={() => setShowTriggerModal(true)}
@@ -216,10 +220,10 @@ export default function RunsView({ runs = [], agents = [], onOpenRun, onRefresh 
           </button>
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+        <div className="bg-white dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase tracking-wider text-[10px]">
+              <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 text-slate-500 uppercase tracking-wider text-[10px]">
                 <tr>
                   <th className="py-3 px-4 font-semibold">Agent</th>
                   <th className="py-3 px-4 font-semibold">Run ID</th>
@@ -230,24 +234,24 @@ export default function RunsView({ runs = [], agents = [], onOpenRun, onRefresh 
                   <th className="py-3 px-4 font-semibold text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {filteredRuns.map((r) => {
-                  const statusMeta = STATUS_CONFIG[r.status] || STATUS_CONFIG.succeeded;
-                  const tmplMeta = TEMPLATE_META[r.template_key] || TEMPLATE_META.customer_support;
-                  const subject = r.input_payload?.subject || "Manual workflow invocation";
+                  const statusMeta = STATUS_CONFIG[r.status] || STATUS_CONFIG.pending;
+                  const tmplMeta = TEMPLATE_META[r.template_key] || { label: r.template_key || "Agent", icon: "AI", color: "text-blue-700 bg-blue-50" };
+                  const subject = r.input_payload?.subject || "";
 
                   return (
                     <tr
                       key={r.id}
                       onClick={() => onOpenRun && onOpenRun(r)}
-                      className="hover:bg-slate-50/80 cursor-pointer transition-colors"
+                      className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 cursor-pointer transition-colors duration-200"
                     >
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-2">
                           <span className="text-base">{tmplMeta.icon}</span>
                           <div>
-                            <span className="font-semibold text-slate-900 block">{r.agent_name || "Agent"}</span>
-                            <span className="text-[10px] text-slate-400 capitalize">{r.trigger_type || "manual"}</span>
+                            <span className="font-semibold text-slate-900 dark:text-gray-100 block">{r.agent_name || r.agent_id || ""}</span>
+                            <span className="text-[10px] text-slate-500 dark:text-gray-400 capitalize transition-colors duration-200">{r.trigger_type || "manual"}</span>
                           </div>
                         </div>
                       </td>
@@ -257,9 +261,9 @@ export default function RunsView({ runs = [], agents = [], onOpenRun, onRefresh 
                       </td>
 
                       <td className="py-3.5 px-4 max-w-xs">
-                        <span className="text-slate-800 font-medium truncate block">{subject}</span>
+                        <span className="text-slate-800 dark:text-gray-200 font-medium truncate block">{subject}</span>
                         {r.error_message && (
-                          <span className="text-[10px] text-red-600 truncate block mt-0.5">
+                          <span className="text-[10px] text-red-600 dark:text-red-400 truncate block mt-0.5 transition-colors duration-200">
                             {r.error_message}
                           </span>
                         )}
@@ -279,7 +283,7 @@ export default function RunsView({ runs = [], agents = [], onOpenRun, onRefresh 
                       </td>
 
                       <td className="py-3.5 px-4 text-slate-400 text-[11px]">
-                        {r.created_at ? new Date(r.created_at).toLocaleTimeString() : "Just now"}
+                        {r.created_at ? new Date(r.created_at).toLocaleTimeString() : "?"}
                       </td>
 
                       <td className="py-3.5 px-4 text-right">
@@ -288,7 +292,7 @@ export default function RunsView({ runs = [], agents = [], onOpenRun, onRefresh 
                             e.stopPropagation();
                             if (onOpenRun) onOpenRun(r);
                           }}
-                          className="px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-white text-slate-600 text-[11px] font-medium transition inline-flex items-center gap-1"
+                          className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 text-[11px] font-medium transition-colors duration-200 inline-flex items-center gap-1"
                         >
                           Trace
                           <ChevronRight className="w-3 h-3" />

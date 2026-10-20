@@ -7,11 +7,11 @@ import {
 } from "lucide-react";
 
 const STEP_STATUS_CONFIG = {
-  completed: { icon: CheckCircle2, color: "text-emerald-500 dark:text-emerald-400", line: "bg-emerald-500/30" },
-  failed:    { icon: XCircle,      color: "text-red-500 dark:text-red-400",     line: "bg-red-500/30" },
-  running:   { icon: Loader2,      color: "text-cyan-500 dark:text-cyan-400",    line: "bg-cyan-500/30" },
-  pending:   { icon: Clock,        color: "text-slate-400 dark:text-gray-500",   line: "bg-slate-300 dark:bg-slate-700" },
-  skipped:   { icon: ChevronRight, color: "text-slate-400 dark:text-gray-500",   line: "bg-slate-300 dark:bg-slate-700" },
+  completed: { icon: CheckCircle2, color: "text-emerald-500 dark:text-emerald-400", line: "bg-emerald-300 dark:bg-emerald-500/30" },
+  failed:    { icon: XCircle,      color: "text-red-500 dark:text-red-400",         line: "bg-red-300 dark:bg-red-500/30" },
+  running:   { icon: Loader2,      color: "text-cyan-500 dark:text-cyan-400",       line: "bg-cyan-300 dark:bg-cyan-500/30" },
+  pending:   { icon: Clock,        color: "text-slate-400 dark:text-gray-500",      line: "bg-slate-300 dark:bg-slate-700" },
+  skipped:   { icon: ChevronRight, color: "text-slate-400 dark:text-gray-500",      line: "bg-slate-300 dark:bg-slate-700" },
 };
 
 function StepRow({ step, index, isLast }) {
@@ -31,7 +31,7 @@ function StepRow({ step, index, isLast }) {
         } flex items-center justify-center z-10`}>
           <Icon className={`w-4 h-4 ${cfg.color} ${isRunning ? "animate-spin" : ""}`} />
         </div>
-        {!isLast && <div className={`w-0.5 flex-1 ${cfg.line} mt-1 mb-1 min-h-[16px]`} />}
+        {!isLast && <div className={`w-0.5 flex-1 ${cfg.line} mt-1 mb-1 min-h-[16px] transition-colors duration-200`} />}
       </div>
 
       {/* Step content */}
@@ -199,8 +199,8 @@ export default function LiveRunModal({ run, onClose }) {
                   <p className="text-slate-500 dark:text-gray-400 text-sm font-medium">Streaming execution steps…</p>
                 </div>
               )}
-              {liveSteps.map((step, i) => (
-                <StepRow key={step.name || i} step={step} index={i} isLast={i === liveSteps.length - 1} />
+            {liveSteps.map((step, i) => (
+                <StepRow key={step.name || step.step_name || i} step={{ ...step, name: step.name || step.step_name }} index={i} isLast={i === liveSteps.length - 1} />
               ))}
             </div>
           )}
@@ -220,7 +220,7 @@ export default function LiveRunModal({ run, onClose }) {
                 <span className="text-xs font-mono text-slate-600 dark:text-gray-400">Final Output</span>
               </div>
               <pre className="p-4 text-xs font-mono text-emerald-700 dark:text-emerald-400 overflow-auto leading-relaxed">
-                {JSON.stringify(run.output || run.result || {}, null, 2)}
+                {JSON.stringify(run.output_payload || run.output || run.result || {}, null, 2)}
               </pre>
             </div>
           )}

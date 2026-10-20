@@ -115,7 +115,7 @@ export default function SignupForm() {
                       required
                       value={form.full_name}
                       onChange={(e) => setForm({ ...form, full_name: e.target.value })}
-                      placeholder="Jane Doe"
+                      placeholder="Your full name"
                       className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-slate-300 bg-slate-50 text-slate-950 font-semibold text-sm placeholder:text-slate-500 placeholder:font-normal focus:bg-white focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 transition-all"
                     />
                   </div>
@@ -136,7 +136,7 @@ export default function SignupForm() {
                       required
                       value={form.company_name}
                       onChange={(e) => setForm({ ...form, company_name: e.target.value })}
-                      placeholder="Acme Inc."
+                      placeholder="Your company name"
                       className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-slate-300 bg-slate-50 text-slate-950 font-semibold text-sm placeholder:text-slate-500 placeholder:font-normal focus:bg-white focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 transition-all"
                     />
                   </div>
@@ -189,7 +189,7 @@ export default function SignupForm() {
                       className="absolute right-2.5 top-2.5 text-slate-600 hover:text-slate-950 hover:bg-slate-200/70 p-1 rounded-md transition"
                       aria-label="Toggle password visibility"
                     >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      {showPassword ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                     </button>
                   </div>
                 </div>
