@@ -60,12 +60,12 @@ def connect_data_source(
     session: Dict[str, Any] = Depends(get_current_tenant_session),
     db: Session = Depends(get_db),
 ):
-    """Register customer database or knowledge connector with schema boundaries."""
+    """Save customer data source metadata. This endpoint does not connect to the external database."""
     org = session["organization"]
 
     schema_config = {
-        "allowlisted_tables": req.allowlisted_tables or ["customers", "orders", "tickets", "products"],
-        "allowlisted_schemas": req.allowlisted_schemas or ["public"],
+        "allowlisted_tables": req.allowlisted_tables or [],
+        "allowlisted_schemas": req.allowlisted_schemas or [],
         "read_only": req.read_only,
     }
 
@@ -73,9 +73,9 @@ def connect_data_source(
         organization_id=org.id,
         name=req.name,
         source_type=req.source_type,
-        connection_ref=f"vault-ds-{org.id[:6]}-{req.source_type}",
+        connection_ref=None,
         schema_config=schema_config,
-        status="ready",
+        status="registered",
     )
     db.add(new_source)
     db.commit()
@@ -87,21 +87,19 @@ def connect_data_source(
         "source_type": new_source.source_type,
         "status": new_source.status,
         "schema_config": new_source.schema_config,
-        "message": f"Data source '{req.name}' connected with read-only permission sandbox",
+        "message": f"Data source '{req.name}' was registered. Connectivity is not configured.",
     }
 
 
 @router.post("/test")
 def test_data_source(req: ConnectDataSourceRequest):
-    """Validate connectivity and return schema table discovery."""
-    sample_tables = ["users", "orders", "invoices", "support_tickets", "subscriptions"]
+    """Report the current external database connectivity capability."""
     return {
-        "success": True,
+        "success": False,
         "source_type": req.source_type,
-        "latency_ms": 78,
-        "discovered_tables": sample_tables,
-        "status": "CONNECTED",
-        "message": "Connection verified. Retrieved 5 candidate tables for allowlisting.",
+        "discovered_tables": [],
+        "status": "NOT_CONFIGURED",
+        "message": "External database connectivity checks are not configured. No connection was made.",
     }
 
 
@@ -120,6 +118,14 @@ def list_knowledge_indexes(
             "retrieval_mode": k.retrieval_mode,
             "doc_count": k.doc_count,
             "agent_id": k.agent_id,
+            "config": {
+                "size_kb": (k.config or {}).get("size_kb"),
+                "documents": [
+                    {"title": document.get("title")}
+                    for document in (k.config or {}).get("documents", [])
+                    if isinstance(document, dict) and document.get("title")
+                ],
+            },
             "created_at": k.created_at.isoformat() if k.created_at else None,
         }
         for k in indices
@@ -132,17 +138,17 @@ def create_knowledge_index(
     session: Dict[str, Any] = Depends(get_current_tenant_session),
     db: Session = Depends(get_db),
 ):
-    """Create and index knowledge base documents with hybrid retrieval."""
+    """Store user supplied knowledge documents for keyword retrieval."""
     org = session["organization"]
-    doc_count = len(req.documents) if req.documents else 12
+    doc_count = len(req.documents) if req.documents else 0
 
     new_index = KnowledgeIndex(
         organization_id=org.id,
         agent_id=req.agent_id,
         name=req.name,
-        retrieval_mode=req.retrieval_mode,
+        retrieval_mode="keyword",
         doc_count=doc_count,
-        config={"chunk_size": 512, "overlap": 64, "embedding_model": "all-MiniLM-L6-v2"},
+        config={"documents": req.documents or [], "size_kb": round(sum(float(d.get("size_kb", 0) or 0) for d in (req.documents or [])), 1)},
     )
     db.add(new_index)
     db.commit()
@@ -153,7 +159,7 @@ def create_knowledge_index(
         "name": new_index.name,
         "retrieval_mode": new_index.retrieval_mode,
         "doc_count": new_index.doc_count,
-        "message": "Knowledge base indexed successfully with hybrid BM25 + Vector pipeline",
+        "message": "Knowledge base documents registered for keyword retrieval",
     }
 
 
@@ -210,7 +216,7 @@ class DocumentUploadPayload(BaseModel):
     filename: Optional[str] = None
     file_type: Optional[str] = "document"
     content: Optional[str] = None
-    file_size_kb: Optional[float] = 120.5
+    file_size_kb: Optional[float] = None
 
 
 @router.post("/upload")
@@ -221,18 +227,21 @@ def upload_document(
 ):
     """Upload documents and index into knowledge base with hybrid retrieval."""
     org = session["organization"]
-    chunks_calculated = max(18, int((payload.file_size_kb or 100) * 12))
+    if not payload.content or not payload.content.strip():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Document text is required for indexing.")
+    document_count = 1
 
     new_index = KnowledgeIndex(
         organization_id=org.id,
         name=payload.name or payload.filename or "Uploaded Knowledge",
-        retrieval_mode="hybrid",
-        doc_count=chunks_calculated,
+        retrieval_mode="keyword",
+        doc_count=document_count,
         config={
             "filename": payload.filename,
             "type": payload.file_type or "document",
             "size_kb": payload.file_size_kb,
-            "embedding_model": "all-MiniLM-L6-v2",
+            "content": payload.content,
+            "indexing_mode": "keyword",
         },
     )
     db.add(new_index)
@@ -242,9 +251,70 @@ def upload_document(
     return {
         "id": new_index.id,
         "name": new_index.name,
-        "chunks": chunks_calculated,
-        "size": f"{payload.file_size_kb:.1f} KB",
+        "documents": document_count,
+        "size": f"{payload.file_size_kb:.1f} KB" if payload.file_size_kb is not None else None,
         "status": "ready",
-        "message": f"Document '{payload.name}' uploaded and indexed into {chunks_calculated} semantic chunks.",
+        "message": f"Text from '{payload.filename or payload.name}' was added to the knowledge base.",
+    }
+
+
+class QueryRetrievalRequest(BaseModel):
+    query: str
+    index_id: Optional[str] = None
+
+
+@router.post("/query")
+def test_retrieval_query(
+    req: QueryRetrievalRequest,
+    session: Dict[str, Any] = Depends(get_current_tenant_session),
+    db: Session = Depends(get_db),
+):
+    """
+    Truthful keyword retrieval query execution across current tenant's knowledge bases.
+    Returns actual indexed documents with scores, or empty state if no matches.
+    """
+    org = session["organization"]
+    q = req.query.strip().lower()
+    if not q:
+        return {"query": req.query, "results": []}
+
+    index_query = db.query(KnowledgeIndex).filter(KnowledgeIndex.organization_id == org.id)
+    if req.index_id:
+        index_query = index_query.filter(KnowledgeIndex.id == req.index_id)
+    indices = index_query.all()
+    if not indices:
+        return {
+            "query": req.query,
+            "results": [],
+            "message": "No knowledge bases connected for this organization. Add documents to an agent knowledge base first.",
+        }
+
+    results = []
+    terms = [word for word in q.split() if len(word) > 1]
+    for idx in indices:
+        config = idx.config or {}
+        documents = config.get("documents") or []
+        if config.get("content"):
+            documents = [{"title": config.get("filename") or idx.name, "content": config["content"]}]
+        for position, document in enumerate(documents):
+            content = str(document.get("content") or "")
+            matched = sum(1 for term in terms if term in content.lower())
+            if not content or matched == 0:
+                continue
+            title = document.get("title") or config.get("filename") or idx.name
+            results.append({
+                "id": f"{idx.id}:{position}",
+                "source": idx.name,
+                "title": title,
+                "score": round(matched / max(len(terms), 1), 3),
+                "mode": "Keyword retrieval",
+                "snippet": content[:500],
+            })
+
+    results.sort(key=lambda item: item["score"], reverse=True)
+
+    return {
+        "query": req.query,
+        "results": results[:5],
     }
 

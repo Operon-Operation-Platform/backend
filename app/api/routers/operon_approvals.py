@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database.postgres.database import get_db
-from database.postgres.models import Approval, AgentRun, AgentTask
+from database.postgres.models import Approval, Agent, AgentRun, AgentTask
 from api.routers.operon_auth import get_current_tenant_session
 from services.tool_registry import tool_registry
 
@@ -32,20 +32,25 @@ def list_approvals(
     """List pending and historical approval requests."""
     org = session["organization"]
     query = db.query(Approval).filter(Approval.organization_id == org.id)
-    if status_filter:
-        query = query.filter(Approval.status == status_filter)
+    if status_filter and status_filter.lower() != "all":
+        query = query.filter(Approval.status == status_filter.lower())
 
     approvals = query.order_by(Approval.created_at.desc()).all()
     result = []
     for a in approvals:
         run = db.query(AgentRun).filter(AgentRun.id == a.run_id).first()
+        agent = db.query(Agent).filter(Agent.id == run.agent_id).first() if run and run.agent_id else None
         result.append({
             "id": a.id,
             "run_id": a.run_id,
+            "agent_id": run.agent_id if run else None,
+            "agent_name": agent.name if agent else (run.agent_id if run else None),
             "action_type": a.action_type,
             "description": a.description,
             "status": a.status,
+            "risk_level": a.risk_level if hasattr(a, "risk_level") else "MEDIUM",
             "payload": a.payload,
+            "proposed_inputs": a.payload,
             "decided_by": a.decided_by,
             "decision_reason": a.decision_reason,
             "created_at": a.created_at.isoformat() if a.created_at else None,
@@ -64,6 +69,9 @@ async def decide_approval(
     """Approve or reject a pending agent action, resuming execution."""
     org = session["organization"]
     user = session["user"]
+
+    if payload.decision not in {"approved", "rejected"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Decision must be approved or rejected.")
 
     approval = (
         db.query(Approval)

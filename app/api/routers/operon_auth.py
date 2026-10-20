@@ -4,7 +4,9 @@ Handles user signup, secure login, workspace management, tenant switching, and b
 """
 
 from datetime import datetime, timezone, timedelta
+import hashlib
 import re
+import secrets
 import uuid
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Header
@@ -19,6 +21,7 @@ from database.postgres.models import (
     OrganizationMember,
     BusinessBranch,
     Agent,
+    PlatformAPIKey,
 )
 from database.postgres.config import settings
 from services.utils import hash_password, verify
@@ -334,6 +337,60 @@ def list_workspaces(
     return results
 
 
+@router.get("/api-key")
+def get_api_key_status(
+    session: Dict[str, Any] = Depends(get_current_tenant_session),
+    db: Session = Depends(get_db),
+):
+    user = session["user"]
+    org = session["organization"]
+    api_key = db.query(PlatformAPIKey).filter(
+        PlatformAPIKey.user_id == user.id,
+        PlatformAPIKey.organization_id == org.id,
+    ).first()
+    return {
+        "has_api_key": api_key is not None,
+        "key_prefix": api_key.key_prefix if api_key else None,
+        "rotated_at": api_key.rotated_at.isoformat() if api_key and api_key.rotated_at else None,
+    }
+
+
+@router.post("/api-key")
+def generate_api_key(
+    session: Dict[str, Any] = Depends(get_current_tenant_session),
+    db: Session = Depends(get_db),
+):
+    user = session["user"]
+    org = session["organization"]
+    raw_key = f"opn_{secrets.token_urlsafe(32)}"
+    key_hash = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+    api_key = db.query(PlatformAPIKey).filter(
+        PlatformAPIKey.user_id == user.id,
+        PlatformAPIKey.organization_id == org.id,
+    ).first()
+
+    if api_key:
+        api_key.key_hash = key_hash
+        api_key.key_prefix = raw_key[:12]
+        api_key.rotated_at = datetime.now(timezone.utc)
+    else:
+        api_key = PlatformAPIKey(
+            user_id=user.id,
+            organization_id=org.id,
+            key_hash=key_hash,
+            key_prefix=raw_key[:12],
+        )
+        db.add(api_key)
+
+    db.commit()
+    db.refresh(api_key)
+    return {
+        "api_key": raw_key,
+        "key_prefix": api_key.key_prefix,
+        "rotated_at": api_key.rotated_at.isoformat() if api_key.rotated_at else None,
+    }
+
+
 @router.post("/workspaces")
 def create_workspace(
     req: WorkspaceCreateRequest,
@@ -574,4 +631,3 @@ def list_workspace_members(
                 "created_at": m.created_at.isoformat() if m.created_at else None,
             })
     return result
-

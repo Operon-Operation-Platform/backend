@@ -33,7 +33,11 @@ def get_platform_stats(db: Session = Depends(get_db)):
     """Retrieve global platform owner metrics across all tenants."""
     total_orgs = db.query(Organization).count()
     total_users = db.query(PlatformUser).count()
-    total_agents = db.query(Agent).count()
+    active_agents = db.query(Agent).filter(
+        Agent.status == "active",
+        Agent.is_deleted == False,
+    ).count()
+    total_agents = db.query(Agent).filter(Agent.is_deleted == False).count()
     total_runs = db.query(AgentRun).count()
     total_mcp = db.query(MCPServer).count()
     pending_tool_reqs = db.query(ToolRequest).filter(ToolRequest.status == "pending").count()
@@ -42,6 +46,7 @@ def get_platform_stats(db: Session = Depends(get_db)):
         "total_organizations": total_orgs,
         "total_users": total_users,
         "total_agents": total_agents,
+        "active_agents": active_agents,
         "total_executions": total_runs,
         "active_mcp_servers": total_mcp,
         "pending_tool_requests": pending_tool_reqs,
@@ -55,7 +60,10 @@ def list_all_tenants(db: Session = Depends(get_db)):
     orgs = db.query(Organization).all()
     results = []
     for o in orgs:
-        agent_count = db.query(Agent).filter(Agent.organization_id == o.id).count()
+        agent_count = db.query(Agent).filter(
+            Agent.organization_id == o.id,
+            Agent.is_deleted == False,
+        ).count()
         run_count = db.query(AgentRun).filter(AgentRun.organization_id == o.id).count()
         results.append({
             "id": o.id,

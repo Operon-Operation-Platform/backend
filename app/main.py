@@ -210,15 +210,20 @@ def health_check():
     return {"status": "ok"}
 
 # CORS Configuration
+frontend_host = os.environ.get("FRONTEND_HOST", "").strip().rstrip("/")
+if frontend_host and not frontend_host.startswith(("http://", "https://")):
+    frontend_host = f"https://{frontend_host}"
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
+    allow_origins=[origin for origin in [
         "https://ai-incident-response-customer-suppo.vercel.app",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
-    ],
+        frontend_host,
+    ] if origin],
     allow_origin_regex=r"https://[a-z0-9-]+\.vercel\.app|https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
@@ -244,6 +249,7 @@ from api.routers import (
     operon_runs,
     operon_approvals,
     operon_platform_admin,
+    operon_evaluations,
 )
 from database.postgres.database import Base, engine
 
@@ -260,4 +266,5 @@ app.include_router(operon_tools_mcp.router)
 app.include_router(operon_runs.router)
 app.include_router(operon_approvals.router)
 app.include_router(operon_platform_admin.router)
+app.include_router(operon_evaluations.router)
 

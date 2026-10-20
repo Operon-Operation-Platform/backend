@@ -7,8 +7,10 @@ Injects tenant context, records step traces, enforces tool allowlists, and manag
 import asyncio
 import logging
 import time
+import uuid
 from typing import Any, Dict, Optional
 from agents.context import TenantContext
+from services.llm_provider import DEFAULT_MODEL, generate_chat_response
 from agents.state import GraphState
 from database.postgres.database import get_db_ctx
 from database.postgres.models import (
@@ -65,7 +67,7 @@ class OperonSupportAgentAdapter:
         state = GraphState(
             id=ticket_input.get("id"),
             user_id=ticket_input.get("user_id"),
-            email=ticket_input.get("email", "customer@example.com"),
+            email=ticket_input.get("email", ""),
             subject=subject,
             body=body,
             account_tier=account_tier,
@@ -84,7 +86,7 @@ class OperonSupportAgentAdapter:
             if ticket_input.get("image_url"):
                 state.has_image = True
                 state.image = ticket_input.get("image_url")
-                state.image_text = f"Analyzed screenshot: Error code 500 detected on {subject}"
+                state.image_text = ""
             cls._record_step(run_id, "Vision Processing", "completed", (time.time() - step1_start) * 1000)
 
             # Step 2: Department Classification & Sentiment
@@ -101,7 +103,7 @@ class OperonSupportAgentAdapter:
                 prio = "MEDIUM"
             state.department = dept
             state.priority = prio
-            state.confidence = 0.95
+            state.confidence = None
             cls._record_step(run_id, "Ticket Classification", "completed", (time.time() - step2_start) * 1000)
 
             # Step 3: Knowledge Retrieval via Tool Registry
@@ -115,23 +117,35 @@ class OperonSupportAgentAdapter:
 
             # Step 4: Resolution Drafting & Business Policy Check
             step4_start = time.time()
-            resolution_text = (
-                f"Hello,\n\n"
-                f"Thank you for contacting support regarding '{subject}'. "
-                f"Our {dept} team has reviewed your request.\n\n"
-                f"Resolution Steps:\n"
-                f"1. Verified account tier: {account_tier}.\n"
-                f"2. Applied standard troubleshooting procedures and validated configuration.\n"
-                f"3. Your reported issue has been diagnosed and corrective steps applied.\n\n"
-                f"If you require further assistance, please let us know.\n\n"
-                f"Best regards,\nOperon Customer Support"
+            retrieved_context = state.retrieved_docs or []
+            resolution_text = await generate_chat_response(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are the configured customer support agent. Follow these operating instructions:\n"
+                            f"{context.instructions or 'Answer accurately and protect customer data.'}\n"
+                            "Draft a response to the customer's message using only the provided verified context. "
+                            "Do not claim that you checked an account, changed data, issued a refund, or fixed an issue "
+                            "unless a recorded tool result confirms that action. State when information is missing."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Subject: {subject}\nMessage: {body}\nAccount tier: {account_tier}\n"
+                            f"Department: {dept}\nVerified retrieved context: {retrieved_context}"
+                        ),
+                    },
+                ],
+                model=(context.model_config_settings or {}).get("model") or DEFAULT_MODEL,
             )
             state.final_response_text = resolution_text
             cls._record_step(run_id, "Draft Resolution", "completed", (time.time() - step4_start) * 1000)
 
             # Step 5: Check Approval Requirement (e.g. if refund mentioned or High Risk)
             if "refund" in content_lower or "cancel" in content_lower:
-                approval_id = f"appr-{run_id[:8]}"
+                approval_id = f"appr-{uuid.uuid4().hex[:12]}"
                 with get_db_ctx() as db:
                     appr = Approval(
                         id=approval_id,
@@ -170,7 +184,7 @@ class OperonSupportAgentAdapter:
                         "priority": state.priority,
                         "confidence": state.confidence,
                         "response_text": state.final_response_text,
-                        "status": "RESOLVED",
+                        "status": "RESPONSE_DRAFTED",
                     }
                     run.completed_at = db.query(AgentRun.created_at).filter(AgentRun.id == run_id).scalar()
                 
@@ -181,8 +195,8 @@ class OperonSupportAgentAdapter:
                     title=f"Support Resolution: {subject[:60]}",
                     status="completed",
                     priority=prio.lower(),
-                    payload={"department": dept, "confidence": 0.95},
-                    outcome="Successfully generated verified response and updated customer record",
+                    payload={"department": dept, "confidence": state.confidence},
+                    outcome="Generated a support response draft; no customer record was changed.",
                 )
                 db.add(task)
                 db.commit()

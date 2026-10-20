@@ -46,12 +46,10 @@ class MCPClient:
                 if res.status_code == 200:
                     data = res.json()
                     return data.get("result", {})
-                else:
-                    logger.warning(f"MCP server handshake returned status {res.status_code}: {res.text}")
-                    return {"protocolVersion": "2024-11-05", "serverInfo": {"name": "External-MCP", "version": "1.0"}}
+                res.raise_for_status()
         except Exception as e:
-            logger.warning(f"MCP handshake failed for {self.server_url}: {e}. Returning fallback info.")
-            return {"protocolVersion": "2024-11-05", "serverInfo": {"name": "Simulated-MCP", "version": "1.0"}}
+            logger.warning(f"MCP handshake failed for {self.server_url}: {e}")
+            raise RuntimeError(f"MCP server initialization failed: {e}") from e
 
     async def list_tools(self) -> List[MCPToolInfo]:
         """Discover tools exposed by the MCP server."""
@@ -75,35 +73,10 @@ class MCPClient:
                         )
                         for t in tools_raw
                     ]
+                res.raise_for_status()
         except Exception as e:
-            logger.warning(f"Failed to list tools from {self.server_url}: {e}. Returning default discovered tools.")
-
-        # Default fallback sample discovered tools for testing & simulated environments
-        return [
-            MCPToolInfo(
-                name="mcp_database_lookup",
-                description="Look up customer record using remote MCP database provider",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "customer_id": {"type": "string", "description": "Customer UUID or email"},
-                        "entity": {"type": "string", "description": "orders, subscriptions, or activity"},
-                    },
-                    "required": ["customer_id"],
-                },
-            ),
-            MCPToolInfo(
-                name="mcp_sentiment_analyzer",
-                description="Analyze sentiment and urgency across complex multiline conversations",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "text": {"type": "string", "description": "Conversation text or thread payload"},
-                    },
-                    "required": ["text"],
-                },
-            ),
-        ]
+            logger.warning(f"Failed to list tools from {self.server_url}: {e}")
+            raise RuntimeError(f"Could not discover tools from MCP server: {e}") from e
 
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> MCPToolCallResult:
         """Invoke a tool on the remote MCP server with safety timeouts and error capture."""
@@ -126,15 +99,6 @@ class MCPClient:
                     res_content = data.get("result", {}).get("content", [])
                     return MCPToolCallResult(content=res_content, isError=False)
         except Exception as e:
-            logger.warning(f"MCP tool call error to {self.server_url}: {e}. Executing mock handler.")
-
-        # Fallback simulated response when remote MCP server is running in testing/mock mode
-        return MCPToolCallResult(
-            content=[
-                {
-                    "type": "text",
-                    "text": f"Successfully executed MCP tool '{tool_name}' with arguments {arguments}. Result: verified status normal.",
-                }
-            ],
-            isError=False,
-        )
+            logger.warning(f"MCP tool call error to {self.server_url}: {e}")
+            return MCPToolCallResult(content=[{"type": "text", "text": str(e)}], isError=True)
+        return MCPToolCallResult(content=[{"type": "text", "text": "MCP server returned a non-success response."}], isError=True)

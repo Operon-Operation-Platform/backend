@@ -6,10 +6,12 @@ and personalized sales follow-up drafts with human approval for deal changes.
 
 import logging
 import time
+import uuid
 from typing import Any, Dict
 from agents.context import TenantContext
 from database.postgres.database import get_db_ctx
 from database.postgres.models import AgentRun, ExecutionStep, Approval, AgentTask
+from services.llm_provider import DEFAULT_MODEL, generate_chat_response
 from services.tool_registry import tool_registry
 
 logger = logging.getLogger("operon.sales_agent")
@@ -23,9 +25,9 @@ class OperonSalesAgentRunner:
         org_id = context.organization_id
         agent_id = context.agent_id
 
-        lead_name = payload.get("lead_name", "Inbound Lead")
-        company = payload.get("company", "Unknown Organization")
-        budget = payload.get("budget", "$10k - $50k")
+        lead_name = payload.get("lead_name", "").strip()
+        company = payload.get("company", "").strip()
+        budget = payload.get("budget", "").strip()
         inquiry = payload.get("inquiry", "")
 
         with get_db_ctx() as db:
@@ -42,30 +44,57 @@ class OperonSalesAgentRunner:
             db.commit()
 
         # Step 1: Lead Qualification
+        step_started = time.perf_counter()
         score = 88 if "enterprise" in company.lower() or "$50k" in budget else 65
         qualification = "HIGH_VALUE_PROSPECT" if score >= 80 else "STANDARD_PROSPECT"
-        cls._record_step(run_id, "Lead Qualification", "completed", 120.0)
+        cls._record_step(run_id, "Lead Qualification", "completed", (time.perf_counter() - step_started) * 1000)
 
         # Step 2: Knowledge & Playbook Match
+        step_started = time.perf_counter()
         playbook_res = await tool_registry.execute_tool(
             context, "search_knowledge", {"query": f"Sales pitch {company} {inquiry}", "top_k": 2}
         )
-        cls._record_step(run_id, "Playbook Retrieval", "completed", 180.0)
+        cls._record_step(run_id, "Playbook Retrieval", "completed", (time.perf_counter() - step_started) * 1000)
 
         # Step 3: Draft Follow-up
-        draft_email = (
-            f"Hi {lead_name},\n\n"
-            f"Thank you for reaching out regarding Operon for {company}. "
-            f"Based on your requirements around '{inquiry}', our platform provides automated agent orchestration, "
-            f"tenant data isolation, and deep tool integrations.\n\n"
-            f"I would love to set up a 15-minute architecture walk-through this week.\n\n"
-            f"Best regards,\nOperon Enterprise Solutions Team"
-        )
-        cls._record_step(run_id, "Draft Follow-up", "completed", 210.0)
+        step_started = time.perf_counter()
+        try:
+            draft_email = await generate_chat_response(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are the configured sales agent. Follow these operating instructions:\n"
+                            f"{context.instructions or 'Respond accurately and do not invent prospect details.'}\n"
+                            "Draft a concise, personalized follow-up based only on the supplied prospect information "
+                            "and inquiry. Do not invent commitments, product capabilities, or meeting availability."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Lead: {lead_name or 'Not provided'}\nCompany: {company or 'Not provided'}\n"
+                            f"Budget: {budget or 'Not provided'}\nInquiry: {inquiry or 'Not provided'}\n"
+                            f"Relevant playbook results: {playbook_res.get('result', {})}"
+                        ),
+                    },
+                ],
+                model=(context.model_config_settings or {}).get("model") or DEFAULT_MODEL,
+            )
+        except Exception:
+            cls._record_step(run_id, "Draft Follow-up", "failed", (time.perf_counter() - step_started) * 1000)
+            with get_db_ctx() as db:
+                run = db.query(AgentRun).filter(AgentRun.id == run_id).first()
+                if run:
+                    run.status = "failed"
+                    run.error_message = "Configured model could not generate the follow-up draft."
+                    db.commit()
+            raise RuntimeError("The configured model could not generate the sales follow-up.") from None
+        cls._record_step(run_id, "Draft Follow-up", "completed", (time.perf_counter() - step_started) * 1000)
 
         # Step 4: Deal Stage Approval if deal stage modification requested
         if payload.get("auto_advance_crm_deal"):
-            appr_id = f"appr-{run_id[:8]}"
+            appr_id = f"appr-{uuid.uuid4().hex[:12]}"
             with get_db_ctx() as db:
                 appr = Approval(
                     id=appr_id,
@@ -98,10 +127,10 @@ class OperonSalesAgentRunner:
             task = AgentTask(
                 organization_id=org_id,
                 run_id=run_id,
-                title=f"Sales Qualified: {lead_name} ({company})",
+                title=f"Sales Follow-up: {lead_name or 'Unspecified lead'}",
                 status="completed",
                 priority="high",
-                outcome="Lead scored and customized enterprise proposal drafted",
+                outcome="Generated a follow-up draft from the supplied lead information.",
             )
             db.add(task)
             db.commit()

@@ -8,6 +8,7 @@ from sqlalchemy import (
     TIMESTAMP,
     VARCHAR,
     text,
+    UniqueConstraint,
 )
 from database.postgres.database import Base
 from sqlalchemy.sql.expression import text
@@ -176,6 +177,22 @@ class PlatformUser(Base):
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
 
 
+class PlatformAPIKey(Base):
+    """Hashed personal API key scoped to a user's workspace membership."""
+    __tablename__ = "platform_api_keys"
+    __table_args__ = (
+        UniqueConstraint("user_id", "organization_id", name="uq_platform_api_key_user_workspace"),
+    )
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    user_id = Column(String, ForeignKey("platform_users.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(String, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    key_hash = Column(String, nullable=False, unique=True, index=True)
+    key_prefix = Column(String, nullable=False)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    rotated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
 class OrganizationMember(Base):
     """Workspace membership and roles."""
     __tablename__ = "organization_members"
@@ -225,7 +242,9 @@ class Agent(Base):
     template_key = Column(String, default="customer_support", nullable=False)
     name = Column(String, nullable=False)
     description = Column(String, nullable=True)
-    status = Column(String, default="active", nullable=False)  # draft, active, paused
+    status = Column(String, default="active", nullable=False)  # draft, configuring, needs_attention, ready_to_publish, active, paused, failed
+    eval_status = Column(String, default="pending", nullable=False)  # pending, passed, failed, inconclusive
+    is_deleted = Column(Boolean, default=False, nullable=False)
     current_version_number = Column(Integer, default=1, nullable=False)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
@@ -375,7 +394,7 @@ class DataSource(Base):
     source_type = Column(String, nullable=False)  # postgres, mysql, neo4j, vector, hybrid
     connection_ref = Column(String, nullable=True)
     schema_config = Column(JSON, nullable=True)  # allowlisted tables, schemas, read_only flag
-    status = Column(String, default="ready", nullable=False)  # ready, testing, error
+    status = Column(String, default="registered", nullable=False)  # registered, testing, error
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
 
 
@@ -463,3 +482,71 @@ class ToolRequest(Base):
     status = Column(String, default="pending", nullable=False)  # pending, approved, rejected, in_development
     admin_notes = Column(String, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+
+
+class CredentialVault(Base):
+    """Encrypted storage for third-party integration secrets."""
+    __tablename__ = "credential_vault"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    organization_id = Column(String, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider_key = Column(String, nullable=False, index=True)
+    connection_id = Column(String, nullable=True, index=True)
+    encrypted_payload = Column(String, nullable=False)
+    key_version = Column(Integer, default=1, nullable=False)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+
+
+class EvaluationScenario(Base):
+    """Defined test scenarios for truth-based agent evaluation."""
+    __tablename__ = "evaluation_scenarios"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    organization_id = Column(String, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    agent_id = Column(String, ForeignKey("agents.id", ondelete="CASCADE"), nullable=True, index=True)
+    template_key = Column(String, nullable=True)
+    name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    input_payload = Column(JSON, nullable=False)
+    expected_tools = Column(JSON, nullable=True)
+    prohibited_tools = Column(JSON, nullable=True)
+    deterministic_rules = Column(JSON, nullable=True)
+    rubric = Column(String, nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+
+
+class EvaluationResultRecord(Base):
+    """Persisted evaluation run execution results."""
+    __tablename__ = "evaluation_results"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    organization_id = Column(String, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    agent_id = Column(String, ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    scenario_id = Column(String, ForeignKey("evaluation_scenarios.id", ondelete="CASCADE"), nullable=False, index=True)
+    run_id = Column(String, ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True, index=True)
+    status = Column(String, nullable=False)  # passed, failed, inconclusive, error
+    deterministic_checks = Column(JSON, nullable=True)
+    llm_judge_score = Column(Float, nullable=True)
+    llm_judge_reasoning = Column(String, nullable=True)
+    judge_model = Column(String, nullable=True)
+    evidence = Column(JSON, nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+
+
+class AgentBuilderSession(Base):
+    """Stateful LangGraph agent creation session with human-in-the-loop interruption support."""
+    __tablename__ = "agent_builder_sessions"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    organization_id = Column(String, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("platform_users.id", ondelete="CASCADE"), nullable=False, index=True)
+    thread_id = Column(String, unique=True, index=True, nullable=False)
+    status = Column(String, default="in_progress", nullable=False)  # in_progress, paused_for_input, ready_to_publish, published, failed
+    current_step = Column(String, default="understanding", nullable=False)
+    plan_steps = Column(JSON, nullable=True)
+    agent_draft_spec = Column(JSON, nullable=True)
+    pending_interruption = Column(JSON, nullable=True)
+    chat_history = Column(JSON, nullable=True)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())

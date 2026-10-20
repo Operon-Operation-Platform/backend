@@ -30,7 +30,6 @@ class TenantContext(BaseModel):
 
     def is_tool_allowed(self, tool_slug: str) -> bool:
         """Verify whether this agent run has permission to invoke a specific tool."""
-        # Builtin safe read tools are allowed by default if wildcard or included
         if "*" in self.allowed_tools or tool_slug in self.allowed_tools:
             return True
         return False

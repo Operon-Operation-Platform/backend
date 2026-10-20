@@ -5,10 +5,11 @@ and streams real-time Server-Sent Events (SSE) directly to the dashboard.
 """
 
 import asyncio
+import hashlib
 import json
 import uuid
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -21,16 +22,70 @@ from database.postgres.models import (
     ExecutionStep,
     BusinessBranch,
     MCPServer,
+    MCPServerTool,
     DataSource,
     IntegrationConnection,
+    Organization,
+    OrganizationMember,
+    PlatformAPIKey,
+    PlatformUser,
 )
 from api.routers.operon_auth import get_current_tenant_session
+from api.routers.operon_integrations import CATALOG_PROVIDERS, provider_catalog_entry
+from services.secret_vault import decrypt_credentials
 from agents.context import TenantContext
 from agents.adapters.support_adapter import OperonSupportAgentAdapter
 from agents.runners.sales_agent import OperonSalesAgentRunner
 from agents.runners.operations_agent import OperonOperationsAgentRunner
 
 router = APIRouter(prefix="/api/v1/runs", tags=["Operon Execution Runs"])
+
+
+def get_agent_run_session(
+    authorization: Optional[str] = Header(None),
+    x_workspace_id: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Allow user JWTs or a user API key to trigger runs in its own workspace."""
+    if authorization and authorization.startswith("Bearer opn_"):
+        raw_key = authorization.removeprefix("Bearer ")
+        key_hash = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+        api_key = db.query(PlatformAPIKey).filter(PlatformAPIKey.key_hash == key_hash).first()
+        if not api_key:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="API key is invalid or has been rotated.",
+            )
+        if x_workspace_id and x_workspace_id != api_key.organization_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This API key is scoped to a different workspace.",
+            )
+
+        user = db.query(PlatformUser).filter(PlatformUser.id == api_key.user_id).first()
+        membership = db.query(OrganizationMember).filter(
+            OrganizationMember.user_id == api_key.user_id,
+            OrganizationMember.organization_id == api_key.organization_id,
+        ).first()
+        org = db.query(Organization).filter(Organization.id == api_key.organization_id).first()
+        if not user or not membership or not org:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="API key owner no longer has access to this workspace.",
+            )
+        return {
+            "user": user,
+            "organization": org,
+            "membership": membership,
+            "role": membership.role,
+            "api_key_id": api_key.id,
+        }
+
+    return get_current_tenant_session(
+        authorization=authorization,
+        x_workspace_id=x_workspace_id,
+        db=db,
+    )
 
 
 class TriggerRunRequest(BaseModel):
@@ -43,14 +98,18 @@ class TriggerRunRequest(BaseModel):
 @router.post("/trigger", status_code=status.HTTP_202_ACCEPTED)
 async def trigger_agent_run(
     req: TriggerRunRequest,
-    session: Dict[str, Any] = Depends(get_current_tenant_session),
+    session: Dict[str, Any] = Depends(get_agent_run_session),
     db: Session = Depends(get_db),
 ):
     """Trigger an execution run for an agent with full tenant context."""
     org = session["organization"]
 
     # 1. Load agent and verify tenant ownership
-    agent = db.query(Agent).filter(Agent.id == req.agent_id, Agent.organization_id == org.id).first()
+    agent = db.query(Agent).filter(
+        Agent.id == req.agent_id,
+        Agent.organization_id == org.id,
+        Agent.is_deleted == False,
+    ).first()
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found in workspace.")
 
@@ -69,10 +128,33 @@ async def trigger_agent_run(
     mcp_servers = db.query(MCPServer).filter(MCPServer.organization_id == org.id, MCPServer.status == "active").all()
     data_sources = db.query(DataSource).filter(DataSource.organization_id == org.id).all()
     integrations = db.query(IntegrationConnection).filter(IntegrationConnection.organization_id == org.id).all()
+    integration_context = [
+        {"id": ic.id, "provider_key": ic.provider_key, "name": ic.name, "status": ic.status}
+        for ic in integrations
+    ]
+    model_settings = (latest_v.model_config_settings or {}) if latest_v else {}
+    selected_integration_keys = model_settings.get("integration_keys", [])
+    if not isinstance(selected_integration_keys, list):
+        selected_integration_keys = []
+    configured_catalog = {
+        provider["key"]: provider_catalog_entry(provider)
+        for provider in CATALOG_PROVIDERS
+    }
+    connected_provider_keys = {integration["provider_key"] for integration in integration_context}
+    for provider_key in selected_integration_keys:
+        provider = configured_catalog.get(provider_key)
+        if provider and provider_key not in connected_provider_keys:
+            integration_context.append({
+                "provider_key": provider_key,
+                "name": provider["name"],
+                "source": "environment",
+                "configured": provider["configured"],
+                "environment_variables": provider["environment_variables"],
+            })
 
     # 4. Construct TenantContext
     run_id = f"run-{uuid.uuid4().hex[:10]}"
-    allowed_actions = latest_v.allowed_actions if (latest_v and latest_v.allowed_actions) else ["*"]
+    allowed_actions = latest_v.allowed_actions if latest_v and latest_v.allowed_actions else []
 
     tenant_context = TenantContext(
         run_id=run_id,
@@ -83,12 +165,27 @@ async def trigger_agent_run(
         branch_id=req.branch_id,
         allowed_tools=allowed_actions,
         data_sources=[{"id": ds.id, "name": ds.name, "source_type": ds.source_type} for ds in data_sources],
-        integrations=[{"id": ic.id, "provider_key": ic.provider_key, "name": ic.name} for ic in integrations],
-        mcp_servers=[{"id": s.id, "server_url": s.server_url, "auth_token": s.auth_token} for s in mcp_servers],
+        integrations=integration_context,
+        mcp_servers=[{
+            "id": s.id,
+            "server_url": s.server_url,
+            "auth_token": (
+                decrypt_credentials(s.auth_token).get("auth_token")
+                if s.auth_token and s.auth_token.startswith("gAAAA")
+                else s.auth_token
+            ),
+            "approved_tools": [
+                tool.tool_name
+                for tool in db.query(MCPServerTool).filter(
+                    MCPServerTool.mcp_server_id == s.id,
+                    MCPServerTool.approved == True,
+                ).all()
+            ],
+        } for s in mcp_servers],
         instructions=latest_v.instructions if latest_v else "",
         business_rules=latest_v.business_rules if latest_v else {},
         escalation_rules=latest_v.escalation_rules if latest_v else {},
-        model_config_settings=latest_v.model_config_settings if latest_v else {},
+        model_config_settings=model_settings,
     )
 
     # 5. Dispatch execution to appropriate archetype runner
@@ -120,7 +217,15 @@ def list_runs(
 ):
     """List execution runs for current workspace."""
     org = session["organization"]
-    query = db.query(AgentRun).filter(AgentRun.organization_id == org.id)
+    query = (
+        db.query(AgentRun)
+        .join(Agent, Agent.id == AgentRun.agent_id)
+        .filter(
+            AgentRun.organization_id == org.id,
+            Agent.organization_id == org.id,
+            Agent.is_deleted == False,
+        )
+    )
     if agent_id:
         query = query.filter(AgentRun.agent_id == agent_id)
     if status_filter:
@@ -129,7 +234,7 @@ def list_runs(
     runs = query.order_by(AgentRun.created_at.desc()).limit(50).all()
     result = []
     for r in runs:
-        agent = db.query(Agent).filter(Agent.id == r.agent_id).first()
+        agent = db.query(Agent).filter(Agent.id == r.agent_id, Agent.organization_id == org.id, Agent.is_deleted == False).first()
         result.append({
             "id": r.id,
             "agent_id": r.agent_id,

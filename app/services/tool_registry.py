@@ -11,6 +11,8 @@ import re
 from typing import Any, Callable, Dict, List, Optional
 from agents.context import TenantContext
 from mcp_servers.mcp_client import MCPClient
+from database.postgres.database import get_db_ctx
+from database.postgres.models import Agent, AgentTask, KnowledgeIndex
 
 logger = logging.getLogger("operon.tool_registry")
 
@@ -25,6 +27,7 @@ class ToolDefinitionItem:
         parameters: Dict[str, Any],
         handler: Callable,
         requires_approval: bool = False,
+        available: bool = True,
     ):
         self.slug = slug
         self.name = name
@@ -33,6 +36,7 @@ class ToolDefinitionItem:
         self.parameters = parameters
         self.handler = handler
         self.requires_approval = requires_approval
+        self.available = available
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -42,6 +46,7 @@ class ToolDefinitionItem:
             "category": self.category,
             "parameters": self.parameters,
             "requires_approval": self.requires_approval,
+            "available": self.available,
         }
 
 
@@ -126,20 +131,33 @@ class ToolRegistry:
         self, context: TenantContext, slug: str, parameters: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Dynamically dispatch tool execution to customer's connected MCP server."""
-        mcp_servers = context.mcp_servers
-        if not mcp_servers:
+        server_id, separator, tool_name = slug.removeprefix("mcp_").partition("_")
+        if not separator or not server_id or not tool_name:
             return {
                 "success": False,
-                "error": f"No active MCP server found for tenant {context.organization_id} to execute {slug}.",
+                "error": f"MCP tool binding '{slug}' is invalid.",
             }
 
-        # Pick matching server or first active
-        target_server = mcp_servers[0]
+        target_server = next(
+            (server for server in context.mcp_servers if server.get("id") == server_id),
+            None,
+        )
+        if not target_server:
+            return {
+                "success": False,
+                "error": f"The MCP server bound to '{slug}' is not connected in this workspace.",
+            }
+        if tool_name not in target_server.get("approved_tools", []):
+            return {
+                "success": False,
+                "error": f"MCP tool '{tool_name}' has not been approved for this workspace.",
+            }
+
         client = MCPClient(
-            server_url=target_server.get("server_url", "http://localhost:8001/mcp"),
+            server_url=target_server["server_url"],
             auth_token=target_server.get("auth_token"),
         )
-        call_res = await client.call_tool(tool_name=slug, arguments=parameters)
+        call_res = await client.call_tool(tool_name=tool_name, arguments=parameters)
         return {
             "success": not call_res.isError,
             "status": "COMPLETED" if not call_res.isError else "FAILED",
@@ -190,6 +208,7 @@ class ToolRegistry:
                 },
                 handler=self._tool_query_database,
                 requires_approval=False,
+                available=False,
             )
         )
 
@@ -214,7 +233,41 @@ class ToolRegistry:
             )
         )
 
-        # 4. Summarize Records (Built-in)
+        # 4. List Workspace Agents (Built-in)
+        self.register(
+            ToolDefinitionItem(
+                slug="list_workspace_agents",
+                name="List Workspace Agents",
+                description="List active agents in the current workspace without exposing other tenants' data.",
+                category="builtin",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "description": "Maximum number of agents to return", "default": 10},
+                    },
+                },
+                handler=self._tool_list_workspace_agents,
+            )
+        )
+
+        # 5. List Recent Tasks (Built-in)
+        self.register(
+            ToolDefinitionItem(
+                slug="list_recent_tasks",
+                name="List Recent Tasks",
+                description="List recent workflow tasks created in the current workspace.",
+                category="builtin",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "description": "Maximum number of tasks to return", "default": 10},
+                    },
+                },
+                handler=self._tool_list_recent_tasks,
+            )
+        )
+
+        # 6. Summarize Records (Built-in)
         self.register(
             ToolDefinitionItem(
                 slug="summarize_records",
@@ -231,6 +284,7 @@ class ToolRegistry:
                 },
                 handler=self._tool_summarize_records,
                 requires_approval=False,
+                available=False,
             )
         )
 
@@ -250,6 +304,7 @@ class ToolRegistry:
                 },
                 handler=self._tool_check_order,
                 requires_approval=False,
+                available=False,
             )
         )
 
@@ -271,6 +326,7 @@ class ToolRegistry:
                 },
                 handler=self._tool_process_refund,
                 requires_approval=True,  # Human-in-the-loop approval enforced!
+                available=False,
             )
         )
 
@@ -291,6 +347,7 @@ class ToolRegistry:
                 },
                 handler=self._tool_slack_post,
                 requires_approval=False,
+                available=False,
             )
         )
 
@@ -312,6 +369,7 @@ class ToolRegistry:
                 },
                 handler=self._tool_jira_escalate,
                 requires_approval=False,
+                available=False,
             )
         )
 
@@ -320,26 +378,40 @@ class ToolRegistry:
     # -------------------------------------------------------------------------
 
     async def _tool_search_knowledge(self, context: TenantContext, params: Dict[str, Any]) -> Dict[str, Any]:
-        query = params.get("query", "")
-        top_k = params.get("top_k", 3)
-        # Check if customer has connected knowledge index or use tenant defaults
+        query = str(params.get("query", "")).strip()
+        top_k = max(1, min(int(params.get("top_k", 3)), 20))
+        if not query:
+            return {"query": query, "retrieved_count": 0, "snippets": []}
+
+        terms = {term.lower() for term in re.findall(r"[\w'-]+", query) if len(term) > 1}
+        scored = []
+        with get_db_ctx() as db:
+            indexes = (
+                db.query(KnowledgeIndex)
+                .filter(KnowledgeIndex.organization_id == context.organization_id)
+                .filter((KnowledgeIndex.agent_id == context.agent_id) | (KnowledgeIndex.agent_id.is_(None)))
+                .all()
+            )
+            for index in indexes:
+                for doc in (index.config or {}).get("documents", []):
+                    if not isinstance(doc, dict):
+                        continue
+                    content = str(doc.get("content") or "")
+                    title = str(doc.get("title") or index.name)
+                    searchable = f"{title} {content}".lower()
+                    score = sum(searchable.count(term) for term in terms)
+                    if score:
+                        scored.append({
+                            "source": title,
+                            "title": title,
+                            "score": score / max(len(terms), 1),
+                            "content": content,
+                        })
+        snippets = sorted(scored, key=lambda item: item["score"], reverse=True)[:top_k]
         return {
             "query": query,
-            "retrieved_count": top_k,
-            "snippets": [
-                {
-                    "source": "knowledge_base/sop_policy.md",
-                    "title": "Standard Operating Procedure & Support Policy",
-                    "score": 0.94,
-                    "content": f"Relevant policy match for query '{query}': Customer SLA response time must be satisfied. Escalations require verified issue replication.",
-                },
-                {
-                    "source": "knowledge_base/refund_policy.md",
-                    "title": "Customer Refund Policy",
-                    "score": 0.88,
-                    "content": "Refunds exceeding $100 require manager approval. Digital service cancellation is prorated.",
-                },
-            ][:top_k],
+            "retrieved_count": len(snippets),
+            "snippets": snippets,
         }
 
     async def _tool_query_database(self, context: TenantContext, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -352,79 +424,92 @@ class ToolRegistry:
         if forbidden_pattern.search(table):
             raise ValueError(f"Unsafe table name or query attempt detected: {table}")
 
-        # Returns mock/sample records conforming to tenant database schema
-        return {
-            "table": table,
-            "filters_applied": filters,
-            "rows_returned": 2,
-            "data": [
-                {"id": "rec_001", "name": "Acme Global Order", "status": "shipped", "value": 249.00},
-                {"id": "rec_002", "name": "Standard Subscription", "status": "active", "value": 49.00},
-            ][:limit],
-        }
+        source = next((item for item in context.data_sources if table in (item.get("schema_config") or {}).get("allowlisted_tables", [])), None)
+        if not source or not source.get("connection_ref"):
+            raise RuntimeError("No connected, allowlisted customer database is configured for this table.")
+        raise RuntimeError("The configured customer database adapter is unavailable; no query was run.")
 
     async def _tool_create_task(self, context: TenantContext, params: Dict[str, Any]) -> Dict[str, Any]:
-        title = params.get("title", "")
-        priority = params.get("priority", "medium")
-        return {
-            "task_id": f"task_{abs(hash(title)) % 100000}",
-            "title": title,
-            "priority": priority,
-            "status": "pending",
-            "message": "Task created in workspace queue",
-        }
+        with get_db_ctx() as db:
+            task = AgentTask(
+                organization_id=context.organization_id,
+                run_id=context.run_id,
+                title=str(params.get("title", "")).strip(),
+                priority=params.get("priority", "medium"),
+                payload=params.get("payload") or {},
+            )
+            db.add(task)
+            db.commit()
+            db.refresh(task)
+            return {"task_id": task.id, "title": task.title, "priority": task.priority, "status": task.status}
+
+    async def _tool_list_workspace_agents(self, context: TenantContext, params: Dict[str, Any]) -> Dict[str, Any]:
+        limit = max(1, min(int(params.get("limit", 10)), 50))
+        with get_db_ctx() as db:
+            agents = (
+                db.query(Agent)
+                .filter(
+                    Agent.organization_id == context.organization_id,
+                    Agent.is_deleted == False,
+                )
+                .order_by(Agent.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+            return {
+                "count": len(agents),
+                "agents": [
+                    {
+                        "id": agent.id,
+                        "name": agent.name,
+                        "template_key": agent.template_key,
+                        "status": agent.status,
+                    }
+                    for agent in agents
+                ],
+            }
+
+    async def _tool_list_recent_tasks(self, context: TenantContext, params: Dict[str, Any]) -> Dict[str, Any]:
+        limit = max(1, min(int(params.get("limit", 10)), 50))
+        with get_db_ctx() as db:
+            tasks = (
+                db.query(AgentTask)
+                .filter(AgentTask.organization_id == context.organization_id)
+                .order_by(AgentTask.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+            return {
+                "count": len(tasks),
+                "tasks": [
+                    {
+                        "id": task.id,
+                        "title": task.title,
+                        "priority": task.priority,
+                        "status": task.status,
+                        "created_at": task.created_at.isoformat() if task.created_at else None,
+                    }
+                    for task in tasks
+                ],
+            }
 
     async def _tool_summarize_records(self, context: TenantContext, params: Dict[str, Any]) -> Dict[str, Any]:
-        customer_id = params.get("customer_id", "")
-        return {
-            "customer_id": customer_id,
-            "summary": f"Customer {customer_id} has 2 active orders and 1 previous support ticket resolved with positive rating.",
-            "health_score": 92,
-            "tier": "Premium",
-        }
+        records = params.get("records") or []
+        if not records:
+            raise RuntimeError("No customer records were provided to summarize.")
+        return {"customer_id": params.get("customer_id"), "records": records}
 
     async def _tool_check_order(self, context: TenantContext, params: Dict[str, Any]) -> Dict[str, Any]:
-        order_id = params.get("order_id", "")
-        return {
-            "order_id": order_id,
-            "status": "In Transit",
-            "carrier": "FedEx",
-            "tracking_number": "TRK-98421034",
-            "estimated_delivery": "2026-10-16",
-            "items": ["Operon Cloud Gateway v2", "API License Key"],
-        }
+        raise RuntimeError("Order lookup requires a connected customer data source or approved MCP tool.")
 
     async def _tool_process_refund(self, context: TenantContext, params: Dict[str, Any]) -> Dict[str, Any]:
-        order_id = params.get("order_id", "")
-        amount = params.get("amount", 0.0)
-        return {
-            "order_id": order_id,
-            "amount": amount,
-            "status": "APPROVED_AND_EXECUTED",
-            "transaction_id": f"tx_refund_{abs(hash(order_id)) % 100000}",
-            "message": f"Successfully processed refund of ${amount} for order {order_id}.",
-        }
+        raise RuntimeError("Refund execution requires a configured payment integration. No refund was submitted.")
 
     async def _tool_slack_post(self, context: TenantContext, params: Dict[str, Any]) -> Dict[str, Any]:
-        channel = params.get("channel", "")
-        message = params.get("message", "")
-        return {
-            "channel": channel,
-            "delivered": True,
-            "timestamp": "2026-10-13T14:52:00Z",
-            "preview": message[:60] + "...",
-        }
+        raise RuntimeError("Message delivery requires a configured Slack integration. No message was sent.")
 
     async def _tool_jira_escalate(self, context: TenantContext, params: Dict[str, Any]) -> Dict[str, Any]:
-        summary = params.get("summary", "")
-        priority = params.get("priority", "High")
-        return {
-            "jira_key": f"OPS-{abs(hash(summary)) % 10000}",
-            "summary": summary,
-            "priority": priority,
-            "status": "Created",
-            "assignee": "L3 Engineering Incident Team",
-        }
+        raise RuntimeError("Issue creation requires a configured Jira integration. No issue was created.")
 
 
 # Global Singleton Registry Instance

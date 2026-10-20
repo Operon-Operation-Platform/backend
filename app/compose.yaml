@@ -6,11 +6,11 @@ services:
     env_file:
       - .env
     ports:
-      - 8000:8000
+      - 8001:8001
     volumes:
       - .:/app
     environment:
-      PORT: 8000
+      PORT: 8001
       ARQ_AUTOSTART_WORKER: "true"
     depends_on:
       - redis

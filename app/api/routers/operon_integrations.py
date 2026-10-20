@@ -3,6 +3,7 @@ Operon Integrations Router
 Manages third-party connector authorizations, scoped credentials, and connection validation.
 """
 
+import os
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -27,6 +28,7 @@ CATALOG_PROVIDERS = [
         "description": "Bi-directional ticket syncing, tags, macro triggers, and customer lookup.",
         "auth_type": "api_key",
         "icon": "zendesk",
+        "environment_variables": ["ZENDESK_SUBDOMAIN", "ZENDESK_EMAIL", "ZENDESK_API_TOKEN"],
     },
     {
         "key": "intercom",
@@ -35,6 +37,7 @@ CATALOG_PROVIDERS = [
         "description": "Live chat conversation sync, customer attribute enrichment, and inbox management.",
         "auth_type": "oauth2",
         "icon": "intercom",
+        "environment_variables": ["INTERCOM_ACCESS_TOKEN"],
     },
     {
         "key": "email",
@@ -43,6 +46,16 @@ CATALOG_PROVIDERS = [
         "description": "Inbound support email ingestion and verified outbound response dispatch.",
         "auth_type": "smtp",
         "icon": "email",
+        "environment_variables": ["SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD"],
+    },
+    {
+        "key": "freshdesk",
+        "name": "Freshdesk",
+        "category": "support",
+        "description": "Help-desk ticket lookup, status updates, and customer support history.",
+        "auth_type": "api_key",
+        "icon": "freshdesk",
+        "environment_variables": ["FRESHDESK_DOMAIN", "FRESHDESK_API_KEY"],
     },
     {
         "key": "hubspot",
@@ -51,6 +64,7 @@ CATALOG_PROVIDERS = [
         "description": "Lead status updates, deal progression, timeline event logging, and contact scoring.",
         "auth_type": "oauth2",
         "icon": "hubspot",
+        "environment_variables": ["HUBSPOT_ACCESS_TOKEN"],
     },
     {
         "key": "salesforce",
@@ -59,6 +73,25 @@ CATALOG_PROVIDERS = [
         "description": "Enterprise account, lead, and opportunity object synchronization.",
         "auth_type": "oauth2",
         "icon": "salesforce",
+        "environment_variables": ["SALESFORCE_INSTANCE_URL", "SALESFORCE_ACCESS_TOKEN"],
+    },
+    {
+        "key": "pipedrive",
+        "name": "Pipedrive",
+        "category": "crm",
+        "description": "Lead and deal lookup, activity tracking, and pipeline updates.",
+        "auth_type": "api_key",
+        "icon": "pipedrive",
+        "environment_variables": ["PIPEDRIVE_API_TOKEN"],
+    },
+    {
+        "key": "linkedin",
+        "name": "LinkedIn",
+        "category": "crm",
+        "description": "Company and professional profile enrichment for sales prospect research.",
+        "auth_type": "oauth2",
+        "icon": "linkedin",
+        "environment_variables": ["LINKEDIN_ACCESS_TOKEN"],
     },
     {
         "key": "slack",
@@ -67,6 +100,16 @@ CATALOG_PROVIDERS = [
         "description": "Channel notifications, incident war room alerts, and interactive approvals.",
         "auth_type": "oauth2",
         "icon": "slack",
+        "environment_variables": ["SLACK_BOT_TOKEN"],
+    },
+    {
+        "key": "microsoft_teams",
+        "name": "Microsoft Teams",
+        "category": "communication",
+        "description": "Post support, sales, and incident notifications to authorized team channels.",
+        "auth_type": "oauth2",
+        "icon": "microsoft_teams",
+        "environment_variables": ["TEAMS_WEBHOOK_URL"],
     },
     {
         "key": "jira",
@@ -75,6 +118,7 @@ CATALOG_PROVIDERS = [
         "description": "Automated incident bug escalation, SLA tracking, and sprint task creation.",
         "auth_type": "api_key",
         "icon": "jira",
+        "environment_variables": ["JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN"],
     },
     {
         "key": "datadog",
@@ -83,27 +127,70 @@ CATALOG_PROVIDERS = [
         "description": "Infrastructure alert webhook ingestion and metric threshold tracking.",
         "auth_type": "api_key",
         "icon": "datadog",
+        "environment_variables": ["DATADOG_API_KEY", "DATADOG_APP_KEY"],
+    },
+    {
+        "key": "pagerduty",
+        "name": "PagerDuty",
+        "category": "ops",
+        "description": "Incident alert ingestion, on-call schedules, and escalation policies.",
+        "auth_type": "api_key",
+        "icon": "pagerduty",
+        "environment_variables": ["PAGERDUTY_API_KEY"],
+    },
+    {
+        "key": "grafana",
+        "name": "Grafana",
+        "category": "ops",
+        "description": "Read dashboards, alert rules, and service telemetry for incident diagnosis.",
+        "auth_type": "api_key",
+        "icon": "grafana",
+        "environment_variables": ["GRAFANA_URL", "GRAFANA_API_KEY"],
+    },
+    {
+        "key": "prometheus",
+        "name": "Prometheus",
+        "category": "ops",
+        "description": "Query approved metrics and alert time series during incident response.",
+        "auth_type": "bearer_token",
+        "icon": "prometheus",
+        "environment_variables": ["PROMETHEUS_URL", "PROMETHEUS_BEARER_TOKEN"],
     },
 ]
 
 
-class ConnectIntegrationRequest(BaseModel):
-    provider_key: str
-    name: str
-    config: Optional[Dict[str, Any]] = None
-    credentials: Optional[Dict[str, Any]] = None
+def provider_catalog_entry(provider: Dict[str, Any]) -> Dict[str, Any]:
+    environment_variables = provider.get("environment_variables", [])
+    return {
+        **provider,
+        "configured": bool(environment_variables) and all(os.getenv(name) for name in environment_variables),
+    }
+
+
+from services.integration_service import IntegrationService, INTEGRATION_CATALOG
+from services.secret_vault import redact_secrets
 
 
 @router.get("/catalog")
 def get_catalog(agent_type: Optional[str] = None):
-    """Retrieve connector catalog, optionally filtered by agent archetype."""
+    """Retrieve connector catalog with full field definitions and tools."""
+    catalog = IntegrationService.get_catalog()
     if agent_type == "customer_support":
-        return [p for p in CATALOG_PROVIDERS if p["category"] in ["support", "communication"]]
+        providers = [p for p in catalog if p["category"] in ["Customer Support", "Communication"]]
     elif agent_type == "sales":
-        return [p for p in CATALOG_PROVIDERS if p["category"] in ["crm", "communication"]]
+        providers = [p for p in catalog if p["category"] in ["Sales & CRM", "Communication"]]
     elif agent_type == "operations":
-        return [p for p in CATALOG_PROVIDERS if p["category"] in ["ops", "communication"]]
-    return CATALOG_PROVIDERS
+        providers = [p for p in catalog if p["category"] in ["Operations", "Communication"]]
+    else:
+        providers = catalog
+
+    return [
+        {
+            **p,
+            "configured": bool(os.getenv(f"{p['key'].upper()}_API_KEY") or os.getenv(f"{p['key'].upper()}_TOKEN")),
+        }
+        for p in providers
+    ]
 
 
 @router.get("/connections")
@@ -111,7 +198,7 @@ def list_connections(
     session: Dict[str, Any] = Depends(get_current_tenant_session),
     db: Session = Depends(get_db),
 ):
-    """List connected third-party integrations for this workspace."""
+    """List connected third-party integrations for this workspace without leaking secrets."""
     org = session["organization"]
     connections = (
         db.query(IntegrationConnection)
@@ -124,7 +211,7 @@ def list_connections(
             "provider_key": c.provider_key,
             "name": c.name,
             "status": c.status,
-            "config": c.config or {},
+            "config": redact_secrets(c.config or {}),
             "created_at": c.created_at.isoformat() if c.created_at else None,
         }
         for c in connections
@@ -132,44 +219,61 @@ def list_connections(
 
 
 @router.post("/connect", status_code=status.HTTP_201_CREATED)
-def connect_integration(
+async def connect_integration(
     req: ConnectIntegrationRequest,
     session: Dict[str, Any] = Depends(get_current_tenant_session),
-    db: Session = Depends(get_db),
 ):
-    """Connect and authorize an integration connection."""
+    """Connect, validate, encrypt credentials, and save an integration connection."""
     org = session["organization"]
-    new_conn = IntegrationConnection(
+    credentials = req.credentials or req.config or {}
+
+    res = await IntegrationService.test_and_save_connection(
         organization_id=org.id,
         provider_key=req.provider_key,
         name=req.name,
-        status="connected",
-        config=req.config or {},
-        encrypted_credentials_ref=f"vault-ref-{org.id[:6]}-{req.provider_key}",
+        credentials=credentials,
     )
-    db.add(new_conn)
-    db.commit()
-    db.refresh(new_conn)
+
+    if not res["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=res.get("error", "Integration connectivity check failed."),
+        )
 
     return {
-        "id": new_conn.id,
-        "provider_key": new_conn.provider_key,
-        "name": new_conn.name,
-        "status": new_conn.status,
-        "message": f"Successfully connected {req.name}",
+        "id": res["connection_id"],
+        "provider_key": res["provider_key"],
+        "name": res["name"],
+        "status": res["status"],
+        "tools_available": res.get("tools_available", []),
+        "message": f"Successfully connected {res['name']}.",
     }
 
 
 @router.post("/test")
-def test_integration_connection(req: ConnectIntegrationRequest):
-    """Validate credentials and test connection handshake."""
+async def test_integration_connection(
+    req: ConnectIntegrationRequest,
+    session: Dict[str, Any] = Depends(get_current_tenant_session),
+):
+    """Validate credentials with truthful testing and bounded retries."""
+    org = session["organization"]
+    credentials = req.credentials or req.config or {}
+
+    res = await IntegrationService.test_and_save_connection(
+        organization_id=org.id,
+        provider_key=req.provider_key,
+        name=req.name,
+        credentials=credentials,
+    )
+
     return {
-        "success": True,
+        "success": res["success"],
         "provider_key": req.provider_key,
-        "latency_ms": 142,
-        "status": "HEALTHY",
-        "message": f"Successfully verified connection to {req.provider_key.capitalize()} API.",
+        "status": "HEALTHY" if res["success"] else "FAILED",
+        "error": res.get("error"),
+        "message": f"Connection to {req.provider_key} verified successfully." if res["success"] else res.get("error"),
     }
+
 
 
 @router.delete("/connections/{conn_id}")

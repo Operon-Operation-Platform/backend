@@ -18,6 +18,7 @@ from database.postgres.models import (
 )
 from api.routers.operon_auth import get_current_tenant_session
 from services.tool_registry import tool_registry
+from services.secret_vault import encrypt_credentials
 from mcp_servers.mcp_client import MCPClient
 from mcp_servers.operon_mcp_server import operon_mcp_server
 
@@ -157,7 +158,7 @@ async def connect_mcp_server(
         name=payload.name,
         server_url=payload.server_url,
         transport_type=payload.transport_type,
-        auth_token=payload.auth_token,
+        auth_token=encrypt_credentials({"auth_token": payload.auth_token}) if payload.auth_token else None,
         status="active",
         discovered_tools=[t.dict() for t in discovered],
     )
@@ -185,6 +186,23 @@ async def connect_mcp_server(
         "status": server.status,
         "message": f"Successfully connected MCP server and discovered {len(discovered)} tools awaiting customer approval.",
     }
+
+
+@router.delete("/servers/{server_id}")
+def disconnect_mcp_server(
+    server_id: str,
+    session: Dict[str, Any] = Depends(get_current_tenant_session),
+    db: Session = Depends(get_db),
+):
+    """Remove a customer-registered MCP server and its discovered tool records."""
+    org = session["organization"]
+    server = db.query(MCPServer).filter(MCPServer.id == server_id, MCPServer.organization_id == org.id).first()
+    if not server:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="MCP server not found.")
+    db.query(MCPServerTool).filter(MCPServerTool.mcp_server_id == server.id).delete(synchronize_session=False)
+    db.delete(server)
+    db.commit()
+    return {"id": server_id, "deleted": True}
 
 
 @router.post("/servers/{server_id}/tools/{tool_id}/approve")
