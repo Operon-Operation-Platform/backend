@@ -29,16 +29,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# 1. Absolute imports from root
-from api.routers import (
-    admin,
-    admin_fetch_tickets,
-    authentication,
-    internal_admin,
-    models,
-    tickets,
-    users,
-)
 from database.postgres.config import (
     settings,
     resolve_postgres_url,
@@ -231,16 +221,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Route Registrations
-app.include_router(models.router)
-app.include_router(users.router)
-app.include_router(authentication.router)
-app.include_router(tickets.router)
-app.include_router(admin_fetch_tickets.router)
-app.include_router(admin.router)
-app.include_router(internal_admin.router)
-
-# Operon Enterprise Multi-Tenant Routers
+# Operon API routes
 from api.routers import (
     operon_auth,
     operon_agents,
