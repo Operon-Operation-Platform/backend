@@ -3,7 +3,7 @@ services:
     name: operon-api
     runtime: docker
     repo: https://github.com/Operon-Operation-Platform/backend.git
-    branch: feat/core-backend-implementation
+    branch: main
     dockerContext: ./app
     dockerfilePath: ./app/Dockerfile
     healthCheckPath: /

@@ -218,6 +218,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin for origin in [
         "https://ai-incident-response-customer-suppo.vercel.app",
+        "https://operon-operation-platform.github.io",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:5173",

@@ -2,13 +2,16 @@ import os
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 
 class Settings(BaseSettings):
 
-    DATABASE_URL: str = "sqlite:///./operon.db"
+    DATABASE_URL: str = Field(
+        validation_alias=AliasChoices("NOVORA_DATABASE_URL", "DATABASE_URL")
+    )
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
