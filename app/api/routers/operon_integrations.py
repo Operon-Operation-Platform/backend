@@ -6,7 +6,7 @@ Manages third-party connector authorizations, scoped credentials, and connection
 import os
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from database.postgres.database import get_db
@@ -17,6 +17,13 @@ from database.postgres.models import (
 from api.routers.operon_auth import get_current_tenant_session
 
 router = APIRouter(prefix="/api/v1/integrations", tags=["Operon Integrations"])
+
+
+class ConnectIntegrationRequest(BaseModel):
+    provider_key: str = Field(min_length=1)
+    name: Optional[str] = None
+    credentials: Dict[str, Any] = Field(default_factory=dict)
+    config: Dict[str, Any] = Field(default_factory=dict)
 
 
 # Pre-populated provider catalog
