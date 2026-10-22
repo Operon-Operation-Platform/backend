@@ -30,7 +30,7 @@ The browser talks to the API over HTTP; model and tool work runs on the backend.
 ## Backend requirements
 
 - Python 3.12
-- PostgreSQL for production; SQLite can be used for local development
+- PostgreSQL for local developement and production
 - Redis when using queued background work with ARQ
 - A model-provider token for provider-backed agent execution
 
@@ -80,6 +80,10 @@ The combined project checkout's root `render.yaml` Blueprint defines separate Do
 The root health endpoint only confirms that the API process answers HTTP requests; it does not prove that the database, Redis, model provider, or integrations are healthy. Verify those dependencies and a representative authenticated workflow in the deployment environment.
 
 Production should use managed persistent PostgreSQL and a configured Redis service. The frontend receives the API host as a public build setting. The backend needs its signing secret and production database configuration; model-backed features may also need a provider token. Keep credentials in the hosting provider's secret settings, never in source control or `NEXT_PUBLIC_*` variables. If service names or custom domains change, review the frontend API host and backend allowed frontend host settings.
+
+## Production Deployment
+
+Configure and deploy the backend server to https://novora-backend-616w.onrender.com. Ensure the frontend connects to this production API URL instead of localhost or development endpoints. Verify that all API requests, authentication flows, environment variables, CORS settings, and backend integrations are correctly configured for production. Ensure the backend service is running and accessible before testing the frontend against the deployed environment.
 
 ## Technical trade-offs
 
