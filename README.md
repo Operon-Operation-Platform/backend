@@ -9,8 +9,6 @@ The frontend and backend are maintained in separate Git repositories and deploye
 
 > **Project scope:** This README documents the current backend structure and workflows. Availability of a specific provider or integration depends on its configuration and credentials.
 
-# Operon — AI Agent Operations Platform
-
 **Project:** Full-stack application · AI agents  
 **Frontend:** [GitHub Repository](https://github.com/Operon-Operation-Platform/frontend)  
 **Backend:** [GitHub Repository](https://github.com/Operon-Operation-Platform/backend)  
