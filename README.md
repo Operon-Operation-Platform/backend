@@ -52,18 +52,14 @@ The walkthrough will cover:
 
 ## 3. Screenshots
 
-Product screenshots will be added as the interface is prepared for the portfolio.
 
 | Interface | Screenshot |
 | :--- | :--- |
-| **Workspace dashboard** | `docs/images/dashboard.png` |
-| **Agent creation** | `docs/images/agent-creation.png` |
-| **Agent configuration** | `docs/images/agent-configuration.png` |
-| **Knowledge management** | `docs/images/knowledge-management.png` |
-| **Agent execution** | `docs/images/execution-monitor.png` |
-| **Evaluation and testing** | `docs/images/evaluation.png` |
+| **Workspace dashboard** | ![Workspace dashboard](docs/images/dashboard.png) |
+| **Agent creation** | ![Agent creation](docs/images/agent-creation.png) |
+| **Agent configuration** | ![Agent configuration](docs/images/agent-configuration.png) |
+| **Knowledge management** | ![Tools & Knowledge management](docs/images/knowledge-management.png) |
 
----
 
 ## 4. Key Capabilities
 
